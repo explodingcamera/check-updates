@@ -10,9 +10,9 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Unit {
     /// A single project manifest (e.g. `crates/foo/Cargo.toml` `[dependencies]`)
-    Project(PathBuf),
+    Project { manifest: PathBuf, name: String },
     /// The workspace root manifest (e.g. `Cargo.toml` `[workspace.dependencies]`)
-    Workspace(PathBuf),
+    Workspace { manifest: PathBuf },
     /// A globally installed package
     Global,
 }
@@ -21,8 +21,21 @@ impl Unit {
     /// Returns the path to the manifest file, if this unit has one.
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Unit::Project(p) | Unit::Workspace(p) => Some(p),
+            Unit::Project { manifest, .. } | Unit::Workspace { manifest, .. } => Some(manifest),
             Unit::Global => None,
+        }
+    }
+
+    /// Returns the name of the unit, if it has one.
+    pub fn name(&self) -> &str {
+        match self {
+            Unit::Project { name, .. } => name,
+            Unit::Workspace { manifest, .. } => manifest
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .unwrap_or("workspace"),
+            Unit::Global => "global",
         }
     }
 }
@@ -45,13 +58,12 @@ impl fmt::Display for DepKind {
     }
 }
 
-pub type Packages = HashMap<Purl, Package>;
-
 #[derive(Debug, Clone)]
 pub struct Usage {
     pub unit: Unit,
     pub req: VersionReq,
     pub kind: DepKind,
+    pub rename: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +74,8 @@ pub struct Package {
     pub repository: Option<String>,
     pub homepage: Option<String>,
 }
+
+pub type Packages = HashMap<Unit, Vec<(VersionReq, DepKind, Package)>>;
 
 #[derive(Debug, Clone)]
 pub struct PackageVersion {

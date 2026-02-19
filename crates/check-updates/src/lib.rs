@@ -1,9 +1,10 @@
 use std::rc::Rc;
 
 use curl::multi::Multi;
+use semver::VersionReq;
 
 use crate::{
-    package::{Packages, Unit},
+    package::{Package, Packages, Usage},
     registry::*,
 };
 mod package;
@@ -40,45 +41,42 @@ pub enum Error {
 }
 
 pub struct CheckUpdates {
-    registries: Vec<Registry>,
+    cargo: CargoRegistry,
+}
+
+impl Default for CheckUpdates {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CheckUpdates {
-    pub fn new() -> Result<Self, Error> {
+    pub fn new() -> Self {
         let state = Rc::new(State::new());
-        let registries = vec![Registry::Cargo(CargoRegistry::initialize(state)?)];
-        Ok(Self { registries })
+        let cargo = CargoRegistry::new(state.clone());
+        Self { cargo }
     }
 
-    pub fn packages(&self) -> impl IntoIterator<Item = (&'static str, &Packages)> {
-        self.registries.iter().map(|registry| match registry {
-            Registry::Cargo(cargo) => (CargoRegistry::TYPE, cargo.packages()),
-            // Registry::Npm(npm) => (NpmRegistry::TYPE, npm.packages()),
-        })
+    pub fn packages(&self) -> Result<Packages, Error> {
+        let mut res: Packages = Default::default();
+        for package in self.cargo.packages()? {
+            for usage in &package.usages {
+                res.entry(usage.unit.clone()).or_default().push((
+                    usage.req.clone(),
+                    usage.kind,
+                    package.clone(),
+                ));
+            }
+        }
+        Ok(res)
     }
 
     /// Update the locally installed versions of the given packages to the one specified
-    pub fn update_versions<P>(
+    pub fn update_versions<'a>(
         &self,
-        registry_type: &'static str,
-        unit: &Unit,
-        packages: &P,
-    ) -> Result<(), Error>
-    where
-        for<'a> &'a P: IntoIterator<Item = &'a Purl>,
-    {
-        for registry in &self.registries {
-            match registry {
-                Registry::Cargo(cargo) if CargoRegistry::TYPE == registry_type => {
-                    cargo.update_versions(unit, packages)?;
-                }
-                // Registry::Npm(npm) if NpmRegistry::TYPE == registry_type => {
-                //     npm.update_versions(unit, packages);
-                // }
-                _ => {}
-            }
-        }
-
+        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, VersionReq)>,
+    ) -> Result<(), Error> {
+        self.cargo.update_versions(packages)?;
         Ok(())
     }
 }

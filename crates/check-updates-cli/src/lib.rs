@@ -1,3 +1,5 @@
+use check_updates::CheckUpdates;
+
 pub mod cli;
 
 pub fn run(args: cli::Args) {
@@ -8,4 +10,8 @@ pub fn run(args: cli::Args) {
             log::LevelFilter::Info
         })
         .init();
+
+    let check_updates = CheckUpdates::new();
+    let packages = check_updates.packages().unwrap();
+    dbg!(packages.keys());
 }
