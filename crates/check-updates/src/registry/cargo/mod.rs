@@ -56,15 +56,23 @@ impl super::RegistryImpl for CargoRegistry {
         )
         .map_err(CargoError::from)?;
 
-        let metadata = MetadataCommand::new()
+        let metadata_cmd = || {
+            let mut cmd = MetadataCommand::new();
+            if let Some(root) = self.state.root() {
+                cmd.current_dir(root);
+            }
+            cmd
+        };
+
+        let metadata = metadata_cmd()
             .features(CargoOpt::AllFeatures)
             .exec()
             .or_else(|_| {
-                MetadataCommand::new()
+                metadata_cmd()
                     .features(CargoOpt::SomeFeatures(vec![]))
                     .exec()
             })
-            .or_else(|_| MetadataCommand::new().exec())
+            .or_else(|_| metadata_cmd().exec())
             .map_err(|e| CargoError::Metadata(e.to_string()))?;
 
         let members = workspace_members(&metadata);
@@ -141,35 +149,46 @@ impl super::RegistryImpl for CargoRegistry {
         let mut edits: HashMap<PathBuf, Vec<ManifestEdit>> = HashMap::new();
 
         for (usage, package, new_req) in packages {
-            let manifest = match usage.unit.path() {
-                Some(p) => p.to_path_buf(),
-                None => {
-                    log::warn!(
-                        "skipping update for '{}': unit has no manifest path",
-                        package.purl.name()
-                    );
-                    continue;
-                }
-            };
+            // Fan out to every dep-kind section that shares the same unit + req.
+            // This handles the case where a package appears under both
+            // [dependencies] and [dev-dependencies] with the same version.
+            let matching_usages = package
+                .usages
+                .iter()
+                .filter(|u| u.unit == usage.unit && u.req == usage.req);
 
-            // The TOML key is the rename (alias) if present, otherwise the
-            // real crate name.
-            let toml_key = usage
-                .rename
-                .as_deref()
-                .unwrap_or_else(|| package.purl.name())
-                .to_string();
+            for u in matching_usages {
+                let manifest = match u.unit.path() {
+                    Some(p) => p.to_path_buf(),
+                    None => {
+                        log::warn!(
+                            "skipping update for '{}': unit has no manifest path",
+                            package.purl.name()
+                        );
+                        continue;
+                    }
+                };
 
-            let section = match &usage.unit {
-                Unit::Workspace { .. } => "workspace.dependencies".to_string(),
-                _ => usage.kind.to_string(),
-            };
+                // The TOML key is the rename (alias) if present, otherwise the
+                // real crate name.
+                let toml_key = u
+                    .rename
+                    .as_deref()
+                    .unwrap_or_else(|| package.purl.name())
+                    .to_string();
 
-            edits.entry(manifest).or_default().push(ManifestEdit {
-                section,
-                toml_key,
-                new_req: new_req.clone(),
-            });
+                let section = match &u.unit {
+                    Unit::Workspace { .. } => "workspace.dependencies".to_string(),
+                    _ => u.kind.to_string(),
+                };
+
+                edits.entry(manifest).or_default().push(ManifestEdit {
+                    section,
+                    toml_key,
+                    new_req: new_req.clone(),
+                    preserve_bare: true,
+                });
+            }
         }
 
         // Apply all edits, one manifest at a time.
@@ -188,7 +207,7 @@ mod tests {
     use crate::registry::RegistryImpl;
 
     fn init() -> CargoRegistry {
-        CargoRegistry::new(State::new().into())
+        CargoRegistry::new(State::new(None).into())
     }
 
     #[test]

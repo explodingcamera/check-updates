@@ -11,6 +11,8 @@ pub(super) struct ManifestEdit {
     pub toml_key: String,
     /// The new version requirement to write.
     pub new_req: VersionReq,
+    /// Whether to strip the ^ prefix for bare version requirements.
+    pub preserve_bare: bool,
 }
 
 /// Apply a batch of version edits to a TOML document string, preserving
@@ -21,7 +23,7 @@ pub(super) fn edit_manifest(contents: &str, edits: &[ManifestEdit]) -> Result<St
         .map_err(|e| CargoError::Metadata(format!("failed to parse manifest: {e}")))?;
 
     for edit in edits {
-        let version_str = edit.new_req.to_string();
+        let mut version_str = edit.new_req.to_string();
 
         // Navigate to the section (handles dotted paths like "workspace.dependencies").
         let section = edit
@@ -47,11 +49,30 @@ pub(super) fn edit_manifest(contents: &str, edits: &[ManifestEdit]) -> Result<St
             continue;
         };
 
+        // Determine the original version string and whether it was bare
+        let original_version = if entry.is_str() {
+            entry.as_str()
+        } else if let Some(table) = entry.as_table_like_mut() {
+            table.get("version").and_then(|v| v.as_str())
+        } else {
+            None
+        };
+
+        let was_bare = edit.preserve_bare
+            && original_version
+                .map(|s| s.trim().starts_with(|c: char| c.is_ascii_digit()))
+                .unwrap_or(false);
+
+        if was_bare {
+            version_str = version_str
+                .strip_prefix('^')
+                .unwrap_or(&version_str)
+                .to_string();
+        }
+
         if entry.is_str() {
-            // Simple syntax:  foo = "1.0"
             *entry = toml_edit::value(version_str);
         } else if let Some(table) = entry.as_table_like_mut() {
-            // Inline-table / table syntax:  foo = { version = "1.0", ... }
             if let Some(v) = table.get_mut("version") {
                 *v = toml_edit::value(version_str);
             } else {
@@ -107,6 +128,7 @@ mod tests {
             section: section.to_string(),
             toml_key: key.to_string(),
             new_req: req.parse().unwrap(),
+            preserve_bare: true,
         }
     }
 
@@ -118,7 +140,8 @@ serde = "1.0"
 "#;
         let result = edit_manifest(input, &[make_edit("dependencies", "serde", "^2.0")]).unwrap();
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        assert_eq!(doc["dependencies"]["serde"].as_str().unwrap(), "^2.0");
+        // Bare version gets ^ stripped
+        assert_eq!(doc["dependencies"]["serde"].as_str().unwrap(), "2.0");
     }
 
     #[test]
@@ -130,7 +153,7 @@ serde = { version = "1.0", features = ["derive"] }
         let result = edit_manifest(input, &[make_edit("dependencies", "serde", "^2.0")]).unwrap();
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let table = doc["dependencies"]["serde"].as_inline_table().unwrap();
-        assert_eq!(table.get("version").unwrap().as_str().unwrap(), "^2.0");
+        assert_eq!(table.get("version").unwrap().as_str().unwrap(), "2.0");
         // features should be preserved
         assert!(table.get("features").is_some());
     }
@@ -146,12 +169,14 @@ features = ["derive"]
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         assert_eq!(
             doc["dependencies"]["serde"]["version"].as_str().unwrap(),
-            "^2.0"
+            "2.0"
         );
         // features should be preserved
-        assert!(doc["dependencies"]["serde"]["features"]
-            .as_array()
-            .is_some());
+        assert!(
+            doc["dependencies"]["serde"]["features"]
+                .as_array()
+                .is_some()
+        );
     }
 
     #[test]
@@ -172,7 +197,7 @@ serde = { version = "1.0", features = ["derive"] }
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         assert_eq!(
             doc["workspace"]["dependencies"]["tokio"].as_str().unwrap(),
-            "^2.0"
+            "2.0"
         );
         assert_eq!(
             doc["workspace"]["dependencies"]["serde"]
@@ -182,7 +207,7 @@ serde = { version = "1.0", features = ["derive"] }
                 .unwrap()
                 .as_str()
                 .unwrap(),
-            "^2.0"
+            "2.0"
         );
     }
 
@@ -204,10 +229,7 @@ cc = { version = "1.0" }
         )
         .unwrap();
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        assert_eq!(
-            doc["dev-dependencies"]["proptest"].as_str().unwrap(),
-            "^2.0"
-        );
+        assert_eq!(doc["dev-dependencies"]["proptest"].as_str().unwrap(), "2.0");
         assert_eq!(
             doc["build-dependencies"]["cc"]
                 .as_inline_table()
@@ -216,7 +238,7 @@ cc = { version = "1.0" }
                 .unwrap()
                 .as_str()
                 .unwrap(),
-            "^2.0"
+            "2.0"
         );
     }
 
@@ -231,7 +253,7 @@ my_serde = { package = "serde", version = "1.0" }
             edit_manifest(input, &[make_edit("dependencies", "my_serde", "^2.0")]).unwrap();
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
         let table = doc["dependencies"]["my_serde"].as_inline_table().unwrap();
-        assert_eq!(table.get("version").unwrap().as_str().unwrap(), "^2.0");
+        assert_eq!(table.get("version").unwrap().as_str().unwrap(), "2.0");
         // package field should be preserved
         assert_eq!(table.get("package").unwrap().as_str().unwrap(), "serde");
     }
@@ -294,7 +316,8 @@ tokio = { version = "1.0", features = ["full"] }
         )
         .unwrap();
         let doc: toml_edit::DocumentMut = result.parse().unwrap();
-        assert_eq!(doc["dependencies"]["serde"].as_str().unwrap(), "^2.0");
+        // Bare versions get ^ stripped
+        assert_eq!(doc["dependencies"]["serde"].as_str().unwrap(), "2.0");
         assert_eq!(
             doc["dependencies"]["tokio"]
                 .as_inline_table()
@@ -303,7 +326,19 @@ tokio = { version = "1.0", features = ["full"] }
                 .unwrap()
                 .as_str()
                 .unwrap(),
-            "^2.0"
+            "2.0"
         );
+    }
+
+    #[test]
+    fn edit_preserves_caret_prefix() {
+        let input = r#"
+[dependencies]
+serde = "^1.0"
+"#;
+        let result = edit_manifest(input, &[make_edit("dependencies", "serde", "^2.0")]).unwrap();
+        let doc: toml_edit::DocumentMut = result.parse().unwrap();
+        // Non-bare versions keep the ^
+        assert_eq!(doc["dependencies"]["serde"].as_str().unwrap(), "^2.0");
     }
 }

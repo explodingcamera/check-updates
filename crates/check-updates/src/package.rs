@@ -1,6 +1,7 @@
 use crate::Purl;
 use semver::VersionReq;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt,
     path::{Path, PathBuf},
@@ -17,6 +18,26 @@ pub enum Unit {
     Global,
 }
 
+impl Ord for Unit {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Unit::Workspace { .. }, Unit::Workspace { .. }) => std::cmp::Ordering::Equal,
+            (Unit::Workspace { .. }, _) => std::cmp::Ordering::Less,
+            (_, Unit::Workspace { .. }) => std::cmp::Ordering::Greater,
+            (Unit::Global, Unit::Global) => std::cmp::Ordering::Equal,
+            (Unit::Global, _) => std::cmp::Ordering::Greater,
+            (_, Unit::Global) => std::cmp::Ordering::Less,
+            _ => self.name().cmp(&other.name()),
+        }
+    }
+}
+
+impl PartialOrd for Unit {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Unit {
     /// Returns the path to the manifest file, if this unit has one.
     pub fn path(&self) -> Option<&Path> {
@@ -27,15 +48,17 @@ impl Unit {
     }
 
     /// Returns the name of the unit, if it has one.
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> Cow<'_, str> {
         match self {
-            Unit::Project { name, .. } => name,
+            Unit::Project { name, .. } => name.into(),
             Unit::Workspace { manifest, .. } => manifest
                 .parent()
                 .and_then(|p| p.file_name())
                 .and_then(|n| n.to_str())
-                .unwrap_or("workspace"),
-            Unit::Global => "global",
+                .map(|n| format!("{n} (workspace)"))
+                .unwrap_or("workspace".into())
+                .into(),
+            Unit::Global => "global".into(),
         }
     }
 }
@@ -62,6 +85,7 @@ impl fmt::Display for DepKind {
 pub struct Usage {
     pub unit: Unit,
     pub req: VersionReq,
+    pub actual_version: Option<semver::Version>,
     pub kind: DepKind,
     pub rename: Option<String>,
 }

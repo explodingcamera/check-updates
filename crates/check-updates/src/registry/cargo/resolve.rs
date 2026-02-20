@@ -7,8 +7,8 @@ use crates_index::SparseIndex;
 use semver::Version;
 
 use crate::{
-    package::{DepKind, Package, PackageVersion, Unit, Usage},
     Purl,
+    package::{DepKind, Package, PackageVersion, Unit, Usage},
 };
 
 use super::CargoError;
@@ -190,6 +190,7 @@ pub(super) fn build_packages(
                 let usage = Usage {
                     unit,
                     req: dep.req.clone(),
+                    actual_version: None, // TODO: figure out how to get this from the lockfile or local cache
                     kind,
                     rename: dep.rename.clone(),
                 };

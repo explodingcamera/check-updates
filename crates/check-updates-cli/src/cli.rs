@@ -17,24 +17,22 @@ pub struct Args {
     #[arg(short, long, help = "Interactive mode")]
     pub interactive: bool,
 
-    #[arg(
-        long,
-        help = "Only check the specified directory, don't search subdirectories"
-    )]
-    pub shallow: bool,
-
     #[arg(long, help = "Root directory to search from", value_name = "DIR")]
     pub root: Option<std::path::PathBuf>,
 
     #[arg(long, help = "Enable verbose output")]
     pub verbose: bool,
 
-    #[arg(
-        short = 'u',
-        long,
-        help = "Upgrade dependencies to their latest versions"
-    )]
+    #[arg(short = 'u', long, help = "Upgrade version requirements in Cargo.toml")]
     pub upgrade: bool,
+
+    #[arg(
+        short = 'U',
+        long = "update",
+        help = "Upgrade requirements and run cargo update",
+        conflicts_with = "upgrade"
+    )]
+    pub update: bool,
 
     #[arg(long, help = "Only upgrade to semver-compatible versions")]
     pub compatible: bool,
@@ -42,12 +40,17 @@ pub struct Args {
     #[arg(long, help = "Include pre-release/alpha/beta versions")]
     pub pre: bool,
 
-    #[arg(long, help = "Require frozen lockfile")]
-    pub frozen: bool,
-
     #[arg(
+        short,
         long,
-        help = "Ignore minimum rust version when checking compatible versions"
+        help = "Only check specific packages (can be specified multiple times)"
     )]
-    pub ignore_rust_version: bool,
+    pub package: Vec<String>,
 }
+
+// TODO
+// #[arg(
+//     long,
+//     help = "Ignore minimum rust version when checking compatible versions"
+// )]
+// pub ignore_rust_version: bool,
