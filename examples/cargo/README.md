@@ -12,12 +12,9 @@ This directory contains sample Cargo projects you can use to test `check-updates
 Run from repository root:
 
 ```bash
-cargo run -p check-updates-cli -- --root crates/check-updates-cli/examples/cargo/workspace-demo --interactive
-cargo run -p check-updates-cli -- --root crates/check-updates-cli/examples/cargo/single-package-demo --interactive
-```
+cargo generate-lockfile --manifest-path examples/cargo/workspace-demo/Cargo.toml
+cargo run -p check-updates-cli -- --root examples/cargo/workspace-demo --interactive
 
-Tip: use `--compact` to test compact interactive mode:
-
-```bash
-cargo run -p check-updates-cli -- --root crates/check-updates-cli/examples/cargo/workspace-demo --interactive --compact
+cargo generate-lockfile --manifest-path examples/cargo/single-package-demo/Cargo.toml
+cargo run -p check-updates-cli -- --root examples/cargo/single-package-demo --interactive
 ```
