@@ -16,3 +16,4 @@ semver.workspace=true
 log.workspace=true
 thiserror.workspace=true
 toml_edit.workspace=true
+disponent.workspace=true

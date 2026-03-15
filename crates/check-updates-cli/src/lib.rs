@@ -65,7 +65,7 @@ pub fn run(args: cli::Args) {
             return;
         }
 
-        let selected = match interactive::prompt_updates(&updates) {
+        let selected = match interactive::prompt_updates(&updates, args.compact) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("{} {e}", Style::new().red().bold().apply_to("error:"));

@@ -12,13 +12,20 @@ pub enum RegistryError {
     Cargo(#[from] cargo::CargoError),
 }
 
-pub(crate) trait RegistryImpl {
-    /// Get the locally installed packages for this registry
-    fn packages(&self) -> Result<impl IntoIterator<Item = Package>, RegistryError>;
+disponent::declare!(
+    #[disponent::configure(inherent, from)]
+    pub enum Registry {
+        Cargo(CargoRegistry),
+    }
 
-    /// Update the locally installed versions of the given packages to the one specified
-    fn update_versions<'a>(
-        &self,
-        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, VersionReq)>,
-    ) -> Result<(), RegistryError>;
-}
+    pub(crate) trait RegistryImpl {
+        /// Get the locally installed packages for this registry
+        fn packages(&self) -> Result<impl IntoIterator<Item = Package>, RegistryError>;
+
+        /// Update the locally installed versions of the given packages to the one specified
+        fn update_versions<'a>(
+            &self,
+            packages: impl IntoIterator<Item = (&'a Usage, &'a Package, VersionReq)>,
+        ) -> Result<(), RegistryError>;
+    }
+);

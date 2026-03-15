@@ -6,7 +6,13 @@
 cargo install --git https://github.com/explodingcamera/check-updates
 ```
 
-<!-- todo: use https://github.com/axodotdev/cargo-dist -->
+<!--
+
+todo:
+- use https://github.com/axodotdev/cargo-dist
+- fix prerelease handling
+- concurrent fetching of versions
+ -->
 
 `check-updates` is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool.
 
@@ -23,4 +29,4 @@ Currently only supports Cargo dependencies, but support for other package manage
 
 Licensed under either of [Apache License, Version 2.0](./LICENSE-APACHE) or [MIT license](./LICENSE-MIT) at your option.
 
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in TinyWasm by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in check-updates by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

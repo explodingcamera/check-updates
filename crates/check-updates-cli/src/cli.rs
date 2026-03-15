@@ -37,6 +37,9 @@ pub struct Args {
     #[arg(long, help = "Only upgrade to semver-compatible versions")]
     pub compatible: bool,
 
+    #[arg(long, help = "Compact interactive mode (fewer spacing lines)")]
+    pub compact: bool,
+
     #[arg(long, help = "Include pre-release/alpha/beta versions")]
     pub pre: bool,
 

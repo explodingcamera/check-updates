@@ -42,14 +42,17 @@ pub enum Error {
 }
 
 pub struct CheckUpdates {
-    cargo: CargoRegistry,
+    cargo: Registry,
 }
 
 impl CheckUpdates {
     pub fn new(root: Option<PathBuf>) -> Self {
         let state = Rc::new(State::new(root));
         let cargo = CargoRegistry::new(state.clone());
-        Self { cargo }
+
+        Self {
+            cargo: cargo.into(),
+        }
     }
 
     pub fn packages(&self) -> Result<Packages, Error> {
