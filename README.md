@@ -1,22 +1,21 @@
 # `check-updates`
 
-> Work in progress
-
-```bash
-cargo install --git https://github.com/explodingcamera/check-updates
-```
-
 <!--
 
 todo:
 - use https://github.com/axodotdev/cargo-dist
-- fix prerelease handling
 - concurrent fetching of versions
  -->
 
-`check-updates` is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool.
+> check-updates is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool.
+>
+> _Currently only supports Cargo dependencies, but support for other package managers is planned for the future._
 
-Currently only supports Cargo dependencies, but support for other package managers is planned for the future.
+## Installation
+
+```bash
+cargo install --git https://github.com/explodingcamera/check-updates
+```
 
 ## See also
 

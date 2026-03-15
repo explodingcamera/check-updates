@@ -31,6 +31,10 @@ pub enum VersionBump {
 
 /// Treats 0.0.x as patch instead of major, since 0.y.z versions often follow a different stability scheme.
 pub fn version_bump(from: &Version, to: &Version) -> VersionBump {
+    if !from.pre.is_empty() && from != to {
+        return VersionBump::Major;
+    }
+
     if from.major != to.major {
         return VersionBump::Major;
     }
@@ -53,16 +57,33 @@ pub fn resolve_version(
     versions: &[PackageVersion],
     req: &VersionReq,
     strategy: &VersionStrategy,
+    current: Option<&Version>,
 ) -> Option<Version> {
     versions
         .iter()
         .filter(|v| !v.yanked)
-        .filter(|v| strategy.pre || v.version.pre.is_empty())
+        .filter(|v| {
+            if strategy.pre {
+                return true;
+            }
+
+            if v.version.pre.is_empty() {
+                return true;
+            }
+
+            current
+                .filter(|c| !c.pre.is_empty())
+                .is_some_and(|c| same_base(&v.version, c))
+        })
         // TODO: once Unit has MSRV, use ignore_rust_version flag to control filtering
         .filter(|v| !strategy.compatible || req.matches(&v.version))
         .map(|v| &v.version)
         .max()
         .cloned()
+}
+
+fn same_base(a: &Version, b: &Version) -> bool {
+    a.major == b.major && a.minor == b.minor && a.patch == b.patch
 }
 
 /// Extract the base version from a `VersionReq` (e.g. `^1.2.3` -> `1.2.3`).
@@ -87,6 +108,13 @@ pub fn build_new_req(old_req: &VersionReq, new_version: &Version) -> VersionReq 
     let old_str = old_req.to_string();
     let digit_pos = old_str.find(|c: char| c.is_ascii_digit()).unwrap_or(0);
     let prefix = &old_str[..digit_pos];
+
+    if !new_version.pre.is_empty() {
+        return format!("{prefix}{new_version}")
+            .parse()
+            .expect("valid version req");
+    }
+
     let version_part = &old_str[digit_pos..];
 
     // Count how many components the original had (major, major.minor, or major.minor.patch)
@@ -303,7 +331,7 @@ mod tests {
             pre: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy),
+            resolve_version(&versions, &req, &strategy, None),
             Some(Version::parse("2.0.0").unwrap())
         );
     }
@@ -336,7 +364,7 @@ mod tests {
             pre: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy),
+            resolve_version(&versions, &req, &strategy, None),
             Some(Version::parse("1.5.0").unwrap())
         );
     }
@@ -363,7 +391,7 @@ mod tests {
             pre: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy),
+            resolve_version(&versions, &req, &strategy, None),
             Some(Version::parse("1.0.0").unwrap())
         );
     }
@@ -390,9 +418,70 @@ mod tests {
             pre: true,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy),
+            resolve_version(&versions, &req, &strategy, None),
             Some(Version::parse("2.0.0-alpha.1").unwrap())
         );
+    }
+
+    #[test]
+    fn test_resolve_version_current_prerelease_without_pre_flag() {
+        let versions = vec![
+            PackageVersion {
+                version: Version::parse("1.0.0-alpha.1").unwrap(),
+                yanked: false,
+                features: Default::default(),
+                rust_version: None,
+            },
+            PackageVersion {
+                version: Version::parse("1.0.0-alpha.2").unwrap(),
+                yanked: false,
+                features: Default::default(),
+                rust_version: None,
+            },
+            PackageVersion {
+                version: Version::parse("1.0.1-alpha.1").unwrap(),
+                yanked: false,
+                features: Default::default(),
+                rust_version: None,
+            },
+        ];
+        let req: VersionReq = "^1.0.0-alpha.1".parse().unwrap();
+        let strategy = VersionStrategy {
+            compatible: false,
+            pre: false,
+        };
+
+        assert_eq!(
+            resolve_version(
+                &versions,
+                &req,
+                &strategy,
+                Some(&Version::parse("1.0.0-alpha.1").unwrap())
+            ),
+            Some(Version::parse("1.0.0-alpha.2").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_build_new_req_keeps_full_prerelease() {
+        let old: VersionReq = "^1.0.0-alpha.1".parse().unwrap();
+        let new_ver = Version::parse("1.0.0-beta.2").unwrap();
+        let result = build_new_req(&old, &new_ver);
+        assert_eq!(result.to_string(), "^1.0.0-beta.2");
+
+        let old: VersionReq = "=1.0.0-alpha.1".parse().unwrap();
+        let result = build_new_req(&old, &new_ver);
+        assert_eq!(result.to_string(), "=1.0.0-beta.2");
+    }
+
+    #[test]
+    fn test_version_bump_prerelease_is_breaking() {
+        let from = Version::parse("1.0.0-alpha.1").unwrap();
+        let to = Version::parse("1.0.0-beta.1").unwrap();
+        assert_eq!(version_bump(&from, &to), VersionBump::Major);
+
+        let to = Version::parse("1.0.0").unwrap();
+        assert_eq!(version_bump(&from, &to), VersionBump::Major);
     }
 
     #[test]

@@ -35,11 +35,11 @@ pub fn resolve_updates<'a>(
                 continue;
             }
 
-            let Some(latest) = resolve_version(&package.versions, req, strategy) else {
+            let current = current_version(req);
+            let Some(latest) = resolve_version(&package.versions, req, strategy, current.as_ref())
+            else {
                 continue;
             };
-
-            let current = current_version(req);
             let new_req = build_new_req(req, &latest);
 
             // Skip if the requirement doesn't need to change

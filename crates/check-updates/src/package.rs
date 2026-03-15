@@ -85,7 +85,6 @@ impl fmt::Display for DepKind {
 pub struct Usage {
     pub unit: Unit,
     pub req: VersionReq,
-    pub actual_version: Option<semver::Version>,
     pub kind: DepKind,
     pub rename: Option<String>,
 }

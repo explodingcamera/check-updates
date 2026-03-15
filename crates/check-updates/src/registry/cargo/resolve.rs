@@ -190,7 +190,6 @@ pub(super) fn build_packages(
                 let usage = Usage {
                     unit,
                     req: dep.req.clone(),
-                    actual_version: None, // TODO: figure out how to get this from the lockfile or local cache
                     kind,
                     rename: dep.rename.clone(),
                 };

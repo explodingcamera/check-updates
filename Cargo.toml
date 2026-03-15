@@ -3,6 +3,7 @@ resolver="3"
 members=["crates/*"]
 default-members=["crates/check-updates-cli"]
 
+
 [workspace.package]
 edition="2024"
 rust-version="1.93"
@@ -12,7 +13,7 @@ authors=["Henry Gressmann <crates@henrygressmann.de>"]
 license="MIT OR Apache-2.0"
 
 [workspace.dependencies]
-check-updates={path="crates/check-updates"}
+check-updates={path="crates/check-updates", version="0.1.0-alpha.0"}
 
 cargo_metadata="0.23"
 crates-index="3.13"
@@ -26,12 +27,21 @@ env_logger="0.11"
 thiserror="2.0"
 disponent="0.2"
 
-
 clap={version="4.6", features=["derive", "color", "unstable-styles"]}
 toml_edit="0.25"
 indicatif="0.18"
 console={version="0.16", default-features=false}
 ctrlc="3.5"
+
+[package]
+name="check-updates-root"
+publish=false
+version="0.1.0"
+edition="2024"
+
+[dependencies]
+check-updates.workspace=true
+semver.workspace=true
 
 [profile.release]
 strip=true

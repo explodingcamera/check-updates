@@ -1,0 +1,18 @@
+[package]
+name = "workspace-demo-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+url.workspace = true
+chrono = "0.4.20"
+toml_edit = "0.21.0"
+rand07 = { package = "rand", version = "0.7.3" }
