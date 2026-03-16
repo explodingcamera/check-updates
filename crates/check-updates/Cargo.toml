@@ -1,10 +1,11 @@
 [package]
 name="check-updates"
-version="0.1.0-alpha.0"
+version.workspace=true
 authors.workspace=true
 edition.workspace=true
 license.workspace=true
 repository.workspace=true
+description="CLI for checking for updates to your Cargo dependencies"
 
 [dependencies]
 cargo_metadata.workspace=true

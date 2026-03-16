@@ -3,12 +3,11 @@ resolver="3"
 members=["crates/*"]
 default-members=["crates/check-updates-cli"]
 
-
 [workspace.package]
 edition="2024"
 rust-version="1.93"
-version="0.1.0"
-repository="github.com/explodingcamera/check-updates"
+version="0.1.0-alpha.0"
+repository="https://github.com/explodingcamera/check-updates"
 authors=["Henry Gressmann <crates@henrygressmann.de>"]
 license="MIT OR Apache-2.0"
 
@@ -49,5 +48,10 @@ debug=false
 lto="fat"
 panic="abort"
 codegen-units=1
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits="release"
+lto="thin"
 
 # RUSTFLAGS="-Zlocation-detail=none" cargo +nightly zigbuild -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size --bin check-updates --release

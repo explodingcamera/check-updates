@@ -1,0 +1,41 @@
+name: Run tests
+
+on:
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "Cargo.lock"
+  push:
+    paths:
+      - "**/*.rs"
+      - "Cargo.lock"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run tests (${{ matrix.toolchain }})
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - stable
+          - nightly
+          - 1.93 # msrv
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+      - name: Run tests
+        run: cargo test --all --all-features
+      - name: Run clippy
+        run: cargo clippy --all-features -- -W warnings
+      - name: Run fmt
+        run: cargo fmt --all -- --check
+        continue-on-error: true

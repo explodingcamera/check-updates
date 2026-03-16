@@ -1,7 +1,9 @@
 # `check-updates`
 
-<!--
+> [!WARNING]
+> This project is in early development and may be unstable
 
+<!--
 todo:
 - use https://github.com/axodotdev/cargo-dist
 - concurrent fetching of versions
