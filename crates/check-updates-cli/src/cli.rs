@@ -23,16 +23,15 @@ pub struct Args {
     #[arg(long, help = "Enable verbose output")]
     pub verbose: bool,
 
-    #[arg(short = 'u', long, help = "Upgrade version requirements in Cargo.toml")]
-    pub upgrade: bool,
-
     #[arg(
-        short = 'U',
-        long = "update",
-        help = "Upgrade requirements and run cargo update",
-        conflicts_with = "upgrade"
+        short = 'u',
+        long,
+        help = "Update version requirements in Cargo.toml and run cargo update"
     )]
     pub update: bool,
+
+    #[arg(short = 'U', long, help = "Update version requirements in Cargo.toml")]
+    pub upgrade: bool,
 
     #[arg(long, help = "Only upgrade to semver-compatible versions")]
     pub compatible: bool,
@@ -49,11 +48,19 @@ pub struct Args {
         help = "Only check specific packages (can be specified multiple times)"
     )]
     pub package: Vec<String>,
+
+    #[command(subcommand)]
+    pub cmd: Option<Command>,
 }
 
-// TODO
-// #[arg(
-//     long,
-//     help = "Ignore minimum rust version when checking compatible versions"
-// )]
-// pub ignore_rust_version: bool,
+#[derive(Parser, Debug)]
+pub enum Command {
+    #[command(
+        about = "Generate shell completion scripts",
+        long_about = "Generate shell completion scripts for check-updates.\nCan be used like `check-updates generate-completion bash > check-updates.bash`"
+    )]
+    GenerateShellCompletion {
+        #[clap(value_name = "SHELL")]
+        shell: clap_complete::Shell,
+    },
+}

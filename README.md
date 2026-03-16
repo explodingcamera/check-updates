@@ -16,7 +16,7 @@ todo:
 ## Installation
 
 ```bash
-cargo install --git https://github.com/explodingcamera/check-updates
+cargo install check-updates-cli
 ```
 
 ## See also

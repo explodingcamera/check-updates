@@ -1,4 +1,5 @@
 use check_updates::CheckUpdates;
+use clap::CommandFactory;
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
 
@@ -15,6 +16,16 @@ pub fn run(args: cli::Args) {
             log::LevelFilter::Info
         })
         .init();
+
+    if let Some(cli::Command::GenerateShellCompletion { shell }) = args.cmd {
+        clap_complete::generate(
+            shell,
+            &mut cli::Args::command(),
+            "check-updates",
+            &mut std::io::stdout(),
+        );
+        return;
+    }
 
     let strategy = version::VersionStrategy::from_args(&args);
 
@@ -86,7 +97,7 @@ pub fn run(args: cli::Args) {
             std::process::exit(1);
         }
 
-        if args.update {
+        if args.upgrade {
             run_cargo_update();
         }
 
@@ -98,11 +109,11 @@ pub fn run(args: cli::Args) {
                 "dependencies"
             }
         );
-    } else if args.upgrade || args.update {
+    } else if args.update || args.upgrade {
         update::print_summary(&updates);
 
         if updates.is_empty() {
-            if args.update {
+            if args.upgrade {
                 run_cargo_update();
             }
             return;
@@ -119,7 +130,7 @@ pub fn run(args: cli::Args) {
             std::process::exit(1);
         }
 
-        if args.update {
+        if args.upgrade {
             run_cargo_update();
         }
 

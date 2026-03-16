@@ -27,6 +27,7 @@ thiserror="2.0"
 disponent="0.2"
 
 clap={version="4.6", features=["derive", "color", "unstable-styles"]}
+clap_complete="4.6"
 toml_edit="0.25"
 indicatif="0.18"
 console={version="0.16", default-features=false}

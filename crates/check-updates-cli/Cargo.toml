@@ -18,6 +18,7 @@ path="src/bin/check-updates.rs"
 
 [dependencies]
 check-updates.workspace=true
+clap_complete.workspace=true
 clap.workspace=true
 indicatif.workspace=true
 console.workspace=true
