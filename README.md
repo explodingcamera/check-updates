@@ -1,17 +1,12 @@
 # `check-updates`
 
-> [!WARNING]
-> This project is in early development and may be unstable
-
-<!--
-todo:
-- use https://github.com/axodotdev/cargo-dist
-- concurrent fetching of versions
- -->
+[<img alt="github" src="https://img.shields.io/badge/github-explodingcamera/check--updates-8da0cb?style=flat-square&labelColor=555555&logo=github" height="20">](https://github.com/explodingcamera/check-updates)
+[<img alt="crates.io" src="https://img.shields.io/crates/v/check-updates.svg?style=flat-square&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/check-updates)
+[<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/explodingcamera/check-updates/ci.yaml?branch=main&style=flat-square" height="20">](https://github.com/explodingcamera/check-updates/actions?query=branch%3Amain)
 
 > check-updates is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool.
->
-> _Currently only supports Cargo dependencies, but support for other package managers is planned for the future._
+
+_Currently only supports Cargo dependencies, but support for other package managers is planned for the future._
 
 ## Installation
 

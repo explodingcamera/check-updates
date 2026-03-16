@@ -6,6 +6,7 @@ edition.workspace=true
 license.workspace=true
 repository.workspace=true
 description="CLI for checking for updates to your Cargo dependencies"
+readme="../../README.md"
 
 [dependencies]
 cargo_metadata.workspace=true
