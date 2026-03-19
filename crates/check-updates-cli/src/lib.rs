@@ -1,4 +1,4 @@
-use check_updates::CheckUpdates;
+use check_updates::{CheckUpdates, Options, RegistryCachePolicy};
 use clap::CommandFactory;
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -37,7 +37,14 @@ pub fn run(args: cli::Args) {
     spinner.set_message("Fetching package data...");
     spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
-    let check_updates = CheckUpdates::new(args.root.clone());
+    let options = Options {
+        registry_cache_policy: match args.cache {
+            cli::RegistryCacheMode::PreferLocal => RegistryCachePolicy::PreferLocal,
+            cli::RegistryCacheMode::Refresh => RegistryCachePolicy::Refresh,
+            cli::RegistryCacheMode::NoCache => RegistryCachePolicy::NoCache,
+        },
+    };
+    let check_updates = CheckUpdates::with_options(args.root.clone(), options);
     let packages = match check_updates.packages() {
         Ok(p) => p,
         Err(e) => {
@@ -69,10 +76,15 @@ pub fn run(args: cli::Args) {
     }
 
     let updates = update::resolve_updates(&packages, &strategy, &args.package);
+    let has_updates = !updates.is_empty();
+    let fail_on_updates = args.fail_on_updates;
 
     if args.interactive {
         if updates.is_empty() {
             update::print_summary(&updates);
+            if args.upgrade {
+                run_cargo_update();
+            }
             return;
         }
 
@@ -85,7 +97,10 @@ pub fn run(args: cli::Args) {
         };
 
         if selected.is_empty() {
-            println!("\n No packages selected.");
+            if args.upgrade {
+                run_cargo_update();
+            }
+            println!("No packages selected.");
             return;
         }
 
@@ -150,6 +165,10 @@ pub fn run(args: cli::Args) {
                 Style::new().dim().apply_to("Run with -u or -U to upgrade.")
             );
         }
+    }
+
+    if fail_on_updates && has_updates {
+        std::process::exit(2);
     }
 }
 

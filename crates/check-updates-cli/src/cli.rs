@@ -1,4 +1,4 @@
-use clap::{Parser, builder::styling};
+use clap::{Parser, ValueEnum, builder::styling};
 
 const STYLES: clap::builder::Styles = styling::Styles::styled()
     .header(styling::AnsiColor::Yellow.on_default().bold())
@@ -22,6 +22,17 @@ pub struct Args {
 
     #[arg(long, help = "Enable verbose output")]
     pub verbose: bool,
+
+    #[arg(long, help = "Exit with a non-zero status when updates are available")]
+    pub fail_on_updates: bool,
+
+    #[arg(
+        long = "cache",
+        value_enum,
+        default_value_t = RegistryCacheMode::PreferLocal,
+        help = "Cache mode"
+    )]
+    pub cache: RegistryCacheMode,
 
     #[arg(
         short = 'u',
@@ -51,6 +62,13 @@ pub struct Args {
 
     #[command(subcommand)]
     pub cmd: Option<Command>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum RegistryCacheMode {
+    PreferLocal,
+    Refresh,
+    NoCache,
 }
 
 #[derive(Parser, Debug)]

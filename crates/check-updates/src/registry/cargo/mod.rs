@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
     rc::Rc,
+    time::Instant,
 };
 
 use cargo_metadata::{CargoOpt, MetadataCommand};
@@ -10,7 +11,7 @@ use semver::VersionReq;
 use thiserror::Error;
 
 use crate::{
-    State,
+    RegistryCachePolicy, State,
     package::{Package, PackageVersion, Unit, Usage},
     registry::RegistryError,
 };
@@ -50,11 +51,9 @@ impl CargoRegistry {
 
 impl super::RegistryImpl for CargoRegistry {
     fn packages(&self) -> Result<impl IntoIterator<Item = Package>, RegistryError> {
-        let index = SparseIndex::from_url_with_hash_kind(
-            crates_index::sparse::URL,
-            &crates_index::HashKind::Stable,
-        )
-        .map_err(CargoError::from)?;
+        let total_start = Instant::now();
+
+        let index = SparseIndex::new_cargo_default().map_err(CargoError::from)?;
 
         let metadata_cmd = || {
             let mut cmd = MetadataCommand::new();
@@ -64,6 +63,7 @@ impl super::RegistryImpl for CargoRegistry {
             cmd
         };
 
+        let metadata_start = Instant::now();
         let metadata = metadata_cmd()
             .features(CargoOpt::AllFeatures)
             .exec()
@@ -74,53 +74,87 @@ impl super::RegistryImpl for CargoRegistry {
             })
             .or_else(|_| metadata_cmd().exec())
             .map_err(|e| CargoError::Metadata(e.to_string()))?;
+        log::debug!(
+            "cargo.packages: cargo metadata resolution took {:?}",
+            metadata_start.elapsed()
+        );
 
+        let registry_start = Instant::now();
         let members = workspace_members(&metadata);
         let names = collect_crates_io_deps(&members);
 
-        let requests: Vec<(String, http::Request<()>)> = names
-            .iter()
-            .filter_map(|name| {
-                let request = index
-                    .make_cache_request(name)
-                    .map_err(|e| e.to_string())
-                    .and_then(|b| b.body(()).map_err(|e| e.to_string()));
+        let mut versions: HashMap<String, Vec<PackageVersion>> = HashMap::new();
+        let mut requests: Vec<(String, http::Request<()>)> = Vec::new();
+        let mut cache_hits = 0usize;
+        let policy = self.state.registry_cache_policy();
+        let use_local_cache = matches!(policy, RegistryCachePolicy::PreferLocal);
 
-                match request {
-                    Ok(req) => Some((name.clone(), req)),
-                    Err(e) => {
-                        log::warn!("failed to build cache request for '{name}': {e}");
-                        None
+        for name in &names {
+            if use_local_cache {
+                match index.crate_from_cache(name) {
+                    Ok(krate) => {
+                        versions.insert(name.clone(), versions_from_crate(&krate));
+                        cache_hits += 1;
+                        continue;
+                    }
+                    Err(err) => {
+                        log::debug!("cargo.packages: cache miss for '{name}': {err}");
                     }
                 }
-            })
-            .collect();
+            }
 
-        let responses = fetch::fetch_all(self.state.multi(), requests);
+            let request = index
+                .make_cache_request(name)
+                .map_err(|e| e.to_string())
+                .and_then(|b| b.body(()).map_err(|e| e.to_string()));
 
-        let versions: HashMap<String, Vec<PackageVersion>> = names
-            .into_iter()
-            .filter_map(|name| {
-                let response = match responses.get(&name) {
-                    Some(Ok(r)) => r.clone(),
+            match request {
+                Ok(req) => requests.push((name.clone(), req)),
+                Err(e) => {
+                    log::warn!("failed to build cache request for '{name}': {e}");
+                }
+            }
+        }
+
+        log::debug!(
+            "cargo.packages: cache policy {:?}, cache hits {}, network requests {}, registry resolve took {:?}",
+            policy,
+            cache_hits,
+            requests.len(),
+            registry_start.elapsed()
+        );
+
+        if !requests.is_empty() {
+            let mut responses = fetch::fetch_all(self.state.multi(), requests);
+
+            for name in names {
+                if versions.contains_key(&name) {
+                    continue;
+                }
+
+                let response = match responses.remove(&name) {
+                    Some(Ok(r)) => r,
                     Some(Err(e)) => {
                         log::warn!("failed to fetch index for '{name}': {e}");
-                        return None;
+                        continue;
                     }
-                    None => return None,
+                    None => continue,
                 };
 
-                match parse_versions(&index, &name, response) {
-                    Ok(v) => Some((name, v)),
+                let write_cache_entry = !matches!(policy, RegistryCachePolicy::NoCache);
+                match parse_versions(&index, &name, response, write_cache_entry) {
+                    Ok(v) => {
+                        versions.insert(name, v);
+                    }
                     Err(e) => {
                         log::warn!("failed to parse versions for '{name}': {e}");
-                        None
                     }
                 }
-            })
-            .collect();
+            }
+        }
 
         let workspace_root_manifest: PathBuf = metadata.workspace_root.join("Cargo.toml").into();
+
         let crate_meta = crate_meta_from_packages(&metadata.packages);
 
         let inherited_deps: HashMap<PathBuf, HashSet<String>> = members
@@ -132,13 +166,21 @@ impl super::RegistryImpl for CargoRegistry {
             })
             .collect();
 
-        Ok(build_packages(
+        let packages: Vec<Package> = build_packages(
             &members,
             &versions,
             &workspace_root_manifest,
             &crate_meta,
             &inherited_deps,
-        ))
+        )
+        .into_iter()
+        .collect();
+        log::debug!(
+            "cargo.packages: total resolution took {:?}",
+            total_start.elapsed()
+        );
+
+        Ok(packages)
     }
 
     fn update_versions<'a>(
@@ -205,9 +247,16 @@ mod tests {
     use super::*;
     use crate::package::DepKind;
     use crate::registry::RegistryImpl;
+    use std::path::PathBuf;
 
     fn init() -> CargoRegistry {
-        CargoRegistry::new(State::new(None).into())
+        CargoRegistry::new(State::new(None, crate::Options::default()).into())
+    }
+
+    fn init_workspace_demo() -> CargoRegistry {
+        let root =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/cargo/workspace-demo");
+        CargoRegistry::new(State::new(Some(root), crate::Options::default()).into())
     }
 
     #[test]
@@ -286,6 +335,34 @@ mod tests {
         assert!(
             clap.repository.is_some(),
             "clap should have a repository URL"
+        );
+    }
+
+    #[test]
+    fn renamed_deps_are_not_mistaken_for_workspace_inherited() {
+        let registry = init_workspace_demo();
+        let packages = registry.packages().unwrap();
+
+        let rand = packages
+            .into_iter()
+            .find(|p| p.purl.name() == "rand")
+            .expect("rand should be in packages");
+
+        let renamed_usages: Vec<_> = rand
+            .usages
+            .iter()
+            .filter(|u| u.rename.as_deref() == Some("rand07"))
+            .collect();
+
+        assert!(
+            !renamed_usages.is_empty(),
+            "workspace demo should include renamed rand07 usages"
+        );
+        assert!(
+            renamed_usages
+                .iter()
+                .all(|u| matches!(u.unit, Unit::Project { .. })),
+            "renamed rand07 usages should map to project manifests, not workspace"
         );
     }
 }

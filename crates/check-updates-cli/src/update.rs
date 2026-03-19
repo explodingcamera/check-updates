@@ -138,18 +138,23 @@ pub fn format_update_line(
 // TODO: maybe print this as a table / add a json output option
 pub fn print_summary(updates: &BTreeMap<&Unit, Vec<Update<'_>>>) {
     if updates.is_empty() {
-        println!("\n No packages need version requirement updates.",);
+        println!("No packages need version requirement updates.");
         return;
     }
 
     let multi_unit = updates.len() > 1;
+    let mut first = true;
 
     for (unit, unit_updates) in updates {
         if multi_unit {
-            println!("\n {}", Style::new().bold().apply_to(unit.name()));
-        } else {
+            if !first {
+                println!();
+            }
+            println!("{}", Style::new().bold().apply_to(unit.name()));
+        } else if !first {
             println!();
         }
+        first = false;
 
         let name_w = unit_updates.iter().map(|u| u.name.len()).max().unwrap_or(0);
         let cur_w = unit_updates

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use check_updates::CheckUpdates;
+use check_updates::{CheckUpdates, Options};
 use semver::{Version, VersionReq};
 
 fn main() {
@@ -16,7 +16,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("examples/cargo/workspace-demo"));
 
-    let checker = CheckUpdates::new(Some(root));
+    let checker = CheckUpdates::with_options(Some(root), Options::default());
     let packages = checker.packages()?;
 
     let mut total = 0usize;

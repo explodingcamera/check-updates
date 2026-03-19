@@ -6,12 +6,45 @@
 
 > check-updates is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool.
 
-_Currently only supports Cargo dependencies, but support for other package managers is planned for the future._
+_Currently only supports `Crates.io`, but support for other package managers / registries is planned for the future._
 
 ## Installation
 
 ```bash
 cargo install check-updates-cli
+```
+
+[![asciicast](https://asciinema.org/a/AJrlkt3ugmIvq4Y1.svg)](https://asciinema.org/a/AJrlkt3ugmIvq4Y1)
+
+## CLI usage
+
+Main ways to use it:
+
+- Run `check-updates` to see available dependency updates.
+- Use `check-updates -i` for interactive selection.
+- Use `check-updates -u` to update version requirements in `Cargo.toml`.
+- Use `check-updates -U` to update requirements and run `cargo update`.
+
+Flags and options:
+
+| Short | Long                | Description                                          |
+| ----- | ------------------- | ---------------------------------------------------- |
+| `-i`  | `--interactive`     | Interactive selection UI                             |
+| `-u`  | `--update`          | Update version requirements in `Cargo.toml`          |
+| `-U`  | `--upgrade`         | Update requirements and run `cargo update`           |
+| `-p`  | `--package <NAME>`  | Only check specific package(s); repeat for more      |
+| -     | `--root <DIR>`      | Root directory to search from                        |
+| -     | `--verbose`         | Enable verbose output                                |
+| -     | `--cache <MODE>`    | Cache mode: `prefer-local`, `refresh`, or `no-cache` |
+| -     | `--compatible`      | Only semver-compatible updates                       |
+| -     | `--pre`             | Include pre-release versions                         |
+| -     | `--compact`         | Compact interactive mode (less spacing)              |
+| -     | `--fail-on-updates` | Exit with status code `2` when updates are available |
+
+For all options and flags, see:
+
+```bash
+check-updates --help
 ```
 
 ## See also

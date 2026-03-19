@@ -28,15 +28,20 @@ pub(super) fn parse_versions(
     index: &SparseIndex,
     name: &str,
     response: http::Response<Vec<u8>>,
+    write_cache_entry: bool,
 ) -> Result<Vec<PackageVersion>, CargoError> {
-    let krate = index.parse_cache_response(name, response, true)?;
+    let krate = index.parse_cache_response(name, response, write_cache_entry)?;
 
     let Some(krate) = krate else {
         log::debug!("no crate data returned for '{name}'");
         return Ok(Vec::new());
     };
 
-    Ok(krate
+    Ok(versions_from_crate(&krate))
+}
+
+pub(super) fn versions_from_crate(krate: &crates_index::Crate) -> Vec<PackageVersion> {
+    krate
         .versions()
         .iter()
         .filter_map(|v| {
@@ -48,7 +53,7 @@ pub(super) fn parse_versions(
                 rust_version: v.rust_version().and_then(|s| Version::parse(s).ok()),
             })
         })
-        .collect())
+        .collect()
 }
 
 /// Read a member's raw Cargo.toml and return the set of dependency names
@@ -174,7 +179,8 @@ pub(super) fn build_packages(
                     .map(|purl| (purl, dep))
             })
             .for_each(|(purl, dep)| {
-                let unit = if inherited.is_some_and(|set| set.contains(&dep.name)) {
+                let dep_key = dep.rename.as_deref().unwrap_or(dep.name.as_str());
+                let unit = if inherited.is_some_and(|set| set.contains(dep_key)) {
                     workspace_unit.clone()
                 } else {
                     member_unit.clone()

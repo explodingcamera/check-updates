@@ -14,16 +14,34 @@ pub use package::{DepKind, Package, PackageVersion, Packages, Unit, Usage};
 
 type Purl = purl::GenericPurl<String>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RegistryCachePolicy {
+    #[default]
+    PreferLocal,
+    Refresh,
+    NoCache,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Options {
+    pub registry_cache_policy: RegistryCachePolicy,
+}
+
 pub struct State {
     multi: Multi,
     root: Option<PathBuf>,
+    registry_cache_policy: RegistryCachePolicy,
 }
 
 impl State {
-    pub fn new(root: Option<PathBuf>) -> Self {
+    pub fn new(root: Option<PathBuf>, options: Options) -> Self {
         let mut multi = Multi::new();
         multi.pipelining(false, true).ok();
-        Self { multi, root }
+        Self {
+            multi,
+            root,
+            registry_cache_policy: options.registry_cache_policy,
+        }
     }
 
     pub fn multi(&self) -> &Multi {
@@ -32,6 +50,10 @@ impl State {
 
     pub fn root(&self) -> Option<&PathBuf> {
         self.root.as_ref()
+    }
+
+    pub fn registry_cache_policy(&self) -> RegistryCachePolicy {
+        self.registry_cache_policy
     }
 }
 
@@ -47,7 +69,11 @@ pub struct CheckUpdates {
 
 impl CheckUpdates {
     pub fn new(root: Option<PathBuf>) -> Self {
-        let state = Rc::new(State::new(root));
+        Self::with_options(root, Options::default())
+    }
+
+    pub fn with_options(root: Option<PathBuf>, options: Options) -> Self {
+        let state = Rc::new(State::new(root, options));
         let cargo = CargoRegistry::new(state.clone());
 
         Self {
