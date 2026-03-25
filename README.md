@@ -27,19 +27,19 @@ Main ways to use it:
 
 Flags and options:
 
-| Short | Long                | Description                                          |
-| ----- | ------------------- | ---------------------------------------------------- |
-| `-i`  | `--interactive`     | Interactive selection UI                             |
-| `-u`  | `--update`          | Update version requirements in `Cargo.toml`          |
-| `-U`  | `--upgrade`         | Update requirements and run `cargo update`           |
-| `-p`  | `--package <NAME>`  | Only check specific package(s); repeat for more      |
-| -     | `--root <DIR>`      | Root directory to search from                        |
-| -     | `--verbose`         | Enable verbose output                                |
-| -     | `--cache <MODE>`    | Cache mode: `prefer-local`, `refresh`, or `no-cache` |
-| -     | `--compatible`      | Only semver-compatible updates                       |
-| -     | `--pre`             | Include pre-release versions                         |
-| -     | `--compact`         | Compact interactive mode (less spacing)              |
-| -     | `--fail-on-updates` | Exit with status code `2` when updates are available |
+| Short | Long                | Description                                               |
+| ----- | ------------------- | --------------------------------------------------------- |
+| `-i`  | `--interactive`     | Interactive selection UI                                  |
+| `-u`  | `--update`          | Update version requirements in `Cargo.toml`               |
+| `-U`  | `--upgrade`         | Update requirements and run `cargo update`                |
+| `-c`  | `--compatible`      | Only semver-compatible updates                            |
+| `-p`  | `--package <NAME>`  | Only check specific workspace package(s); repeat for more |
+| -     | `--root <DIR>`      | Root directory to search from                             |
+| -     | `--verbose`         | Enable verbose output                                     |
+| -     | `--cache <MODE>`    | Cache mode: `prefer-local`, `refresh`, or `no-cache`      |
+| -     | `--pre`             | Include pre-release versions                              |
+| -     | `--compact`         | Compact interactive mode (less spacing)                   |
+| -     | `--fail-on-updates` | Exit with status code `2` when updates are available      |
 
 For all options and flags, see:
 

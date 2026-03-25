@@ -1,18 +1,28 @@
 [package]
-name = "workspace-demo-app"
-version = "0.1.0"
-edition = "2021"
+name="workspace-demo-app"
+version="0.2.0"
+edition="2021"
 
 [dependencies]
-anyhow.workspace = true
-clap.workspace = true
-rand.workspace = true
-regex.workspace = true
-reqwest.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-tokio.workspace = true
-url.workspace = true
-chrono = "0.4.20"
-toml_edit = "0.21.0"
-rand07 = { package = "rand", version = "0.7.3" }
+ahash.workspace=true
+anyhow.workspace=true
+clap.workspace=true
+regex.workspace=true
+reqwest.workspace=true
+serde.workspace=true
+serde_json.workspace=true
+tokio.workspace=true
+url.workspace=true
+chrono=">=0.4.20, <0.5.0"
+toml_edit="^0.21"
+rand07={package="rand", version="0.6"}
+
+[target.'cfg(unix)'.dependencies]
+anyhow.workspace=true
+tokio=">=1.18, <2.0"
+
+[target.'cfg(windows)'.dependencies.serde]
+workspace=true
+
+[target.'cfg(windows)'.dependencies.toml_edit]
+version="0.20"

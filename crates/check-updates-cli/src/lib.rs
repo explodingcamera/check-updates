@@ -49,7 +49,7 @@ pub fn run(args: cli::Args) {
         Ok(p) => p,
         Err(e) => {
             spinner.finish_and_clear();
-            eprintln!("{} {e}", Style::new().red().bold().apply_to("error:"));
+            log::error!("{e}");
             std::process::exit(1);
         }
     };
@@ -57,19 +57,12 @@ pub fn run(args: cli::Args) {
     spinner.finish_and_clear();
 
     if !args.package.is_empty() {
-        let known: std::collections::HashSet<&str> = packages
-            .values()
-            .flatten()
-            .map(|(_, _, pkg)| pkg.purl.name())
-            .collect();
-
         for name in &args.package {
-            if !known.contains(name.as_str()) {
-                eprintln!(
-                    "{} package '{}' not found in dependencies",
-                    Style::new().red().bold().apply_to("error:"),
-                    name
-                );
+            if !packages
+                .keys()
+                .any(|unit| update::unit_matches_filter(unit, name))
+            {
+                log::error!("workspace package '{}' not found", name);
                 std::process::exit(1);
             }
         }
@@ -91,7 +84,7 @@ pub fn run(args: cli::Args) {
         let selected = match interactive::prompt_updates(&updates, args.compact) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("{} {e}", Style::new().red().bold().apply_to("error:"));
+                log::error!("{e}");
                 std::process::exit(1);
             }
         };
@@ -108,7 +101,7 @@ pub fn run(args: cli::Args) {
         if let Err(e) =
             check_updates.update_versions(selected.iter().map(|(u, p, r)| (*u, *p, r.clone())))
         {
-            eprintln!("{} {e}", Style::new().red().bold().apply_to("error:"));
+            log::error!("{e}");
             std::process::exit(1);
         }
 
@@ -141,7 +134,7 @@ pub fn run(args: cli::Args) {
                 .iter()
                 .map(|u| (u.usage, u.package, u.new_req.clone()))
         })) {
-            eprintln!("{} {e}", Style::new().red().bold().apply_to("error:"));
+            log::error!("{e}");
             std::process::exit(1);
         }
 
@@ -179,10 +172,7 @@ fn run_cargo_update() {
         .expect("failed to run cargo update");
 
     if !status.success() {
-        eprintln!(
-            "{} cargo update failed",
-            Style::new().red().bold().apply_to("error:")
-        );
+        log::error!("cargo update failed");
         std::process::exit(1);
     }
 }

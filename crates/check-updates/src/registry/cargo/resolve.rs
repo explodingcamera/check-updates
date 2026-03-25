@@ -13,6 +13,34 @@ use crate::{
 
 use super::CargoError;
 
+#[derive(Default)]
+pub(super) struct InheritedDeps {
+    root: HashSet<(DepKind, String)>,
+    target: HashSet<(DepKind, String, String)>,
+}
+
+impl InheritedDeps {
+    fn contains(&self, dep: &cargo_metadata::Dependency) -> bool {
+        let key = dep
+            .rename
+            .as_deref()
+            .unwrap_or(dep.name.as_str())
+            .to_string();
+        let kind = match dep.kind {
+            cargo_metadata::DependencyKind::Normal => DepKind::Normal,
+            cargo_metadata::DependencyKind::Development => DepKind::Dev,
+            cargo_metadata::DependencyKind::Build => DepKind::Build,
+            _ => DepKind::Normal,
+        };
+
+        if let Some(target) = &dep.target {
+            return self.target.contains(&(kind, key, target.to_string()));
+        }
+
+        self.root.contains(&(kind, key))
+    }
+}
+
 /// Resolve workspace member IDs to their package metadata.
 pub(super) fn workspace_members(
     metadata: &cargo_metadata::Metadata,
@@ -56,14 +84,14 @@ pub(super) fn versions_from_crate(krate: &crates_index::Crate) -> Vec<PackageVer
         .collect()
 }
 
-/// Read a member's raw Cargo.toml and return the set of dependency names
-/// that are inherited from the workspace (i.e. have `workspace = true`).
-pub(super) fn workspace_inherited_deps(manifest_path: &Path) -> HashSet<String> {
+/// Read a member's raw Cargo.toml and return dependencies inherited from
+/// workspace (`workspace = true`), split by root vs target tables.
+pub(super) fn workspace_inherited_deps(manifest_path: &Path) -> InheritedDeps {
     let contents = match std::fs::read_to_string(manifest_path) {
         Ok(c) => c,
         Err(e) => {
             log::warn!("failed to read {}: {e}", manifest_path.display());
-            return HashSet::new();
+            return InheritedDeps::default();
         }
     };
 
@@ -71,29 +99,71 @@ pub(super) fn workspace_inherited_deps(manifest_path: &Path) -> HashSet<String> 
         Ok(d) => d,
         Err(e) => {
             log::warn!("failed to parse {}: {e}", manifest_path.display());
-            return HashSet::new();
+            return InheritedDeps::default();
         }
     };
 
-    let mut inherited = HashSet::new();
+    let mut inherited = InheritedDeps::default();
 
-    for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
+    let dep_sections = ["dependencies", "dev-dependencies", "build-dependencies"];
+
+    for section in dep_sections {
         if let Some(table) = doc.get(section).and_then(|v| v.as_table()) {
-            for (name, value) in table {
-                let is_workspace = value
-                    .as_table_like()
-                    .and_then(|t| t.get("workspace"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+            collect_workspace_inherited_from_table(table, section, None, &mut inherited);
+        }
+    }
 
-                if is_workspace {
-                    inherited.insert(name.to_string());
+    if let Some(targets) = doc.get("target").and_then(|v| v.as_table()) {
+        for (target_name, target_item) in targets {
+            let Some(target_table) = target_item.as_table() else {
+                continue;
+            };
+
+            for section in dep_sections {
+                if let Some(table) = target_table.get(section).and_then(|v| v.as_table()) {
+                    collect_workspace_inherited_from_table(
+                        table,
+                        section,
+                        Some(target_name),
+                        &mut inherited,
+                    );
                 }
             }
         }
     }
 
     inherited
+}
+
+fn collect_workspace_inherited_from_table(
+    table: &toml_edit::Table,
+    section: &str,
+    target: Option<&str>,
+    out: &mut InheritedDeps,
+) {
+    let kind = match section {
+        "dependencies" => DepKind::Normal,
+        "dev-dependencies" => DepKind::Dev,
+        "build-dependencies" => DepKind::Build,
+        _ => return,
+    };
+
+    for (name, value) in table {
+        let is_workspace = value
+            .as_table_like()
+            .and_then(|t| t.get("workspace"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if is_workspace {
+            if let Some(target_name) = target {
+                out.target
+                    .insert((kind, name.to_string(), target_name.to_string()));
+            } else {
+                out.root.insert((kind, name.to_string()));
+            }
+        }
+    }
 }
 
 pub(super) fn collect_crates_io_deps(members: &[&cargo_metadata::Package]) -> HashSet<String> {
@@ -153,7 +223,7 @@ pub(super) fn build_packages(
     versions: &HashMap<String, Vec<PackageVersion>>,
     workspace_root_manifest: &Path,
     crate_meta: &HashMap<String, CrateMeta>,
-    inherited_deps: &HashMap<PathBuf, HashSet<String>>,
+    inherited_deps: &HashMap<PathBuf, InheritedDeps>,
 ) -> impl IntoIterator<Item = Package> + use<> {
     let mut packages = HashMap::new();
     let workspace_unit = Unit::Workspace {
@@ -179,8 +249,7 @@ pub(super) fn build_packages(
                     .map(|purl| (purl, dep))
             })
             .for_each(|(purl, dep)| {
-                let dep_key = dep.rename.as_deref().unwrap_or(dep.name.as_str());
-                let unit = if inherited.is_some_and(|set| set.contains(dep_key)) {
+                let unit = if inherited.is_some_and(|set| set.contains(dep)) {
                     workspace_unit.clone()
                 } else {
                     member_unit.clone()

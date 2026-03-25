@@ -157,7 +157,7 @@ impl super::RegistryImpl for CargoRegistry {
 
         let crate_meta = crate_meta_from_packages(&metadata.packages);
 
-        let inherited_deps: HashMap<PathBuf, HashSet<String>> = members
+        let inherited_deps: HashMap<PathBuf, InheritedDeps> = members
             .iter()
             .map(|member| {
                 let path: PathBuf = member.manifest_path.clone().into();
@@ -220,14 +220,17 @@ impl super::RegistryImpl for CargoRegistry {
                     .to_string();
 
                 let section = match &u.unit {
-                    Unit::Workspace { .. } => "workspace.dependencies".to_string(),
-                    _ => u.kind.to_string(),
+                    Unit::Workspace { .. } => {
+                        vec!["workspace".to_string(), "dependencies".to_string()]
+                    }
+                    _ => vec![u.kind.to_string()],
                 };
 
                 edits.entry(manifest).or_default().push(ManifestEdit {
                     section,
                     toml_key,
                     new_req: new_req.clone(),
+                    old_req: u.req.clone(),
                     preserve_bare: true,
                 });
             }
@@ -235,7 +238,21 @@ impl super::RegistryImpl for CargoRegistry {
 
         // Apply all edits, one manifest at a time.
         for (manifest, file_edits) in &edits {
-            apply_manifest_edits(manifest, file_edits)?;
+            let mut seen = HashSet::new();
+            let deduped: Vec<_> = file_edits
+                .iter()
+                .filter(|edit| {
+                    seen.insert((
+                        edit.section.clone(),
+                        edit.toml_key.clone(),
+                        edit.old_req.to_string(),
+                        edit.new_req.to_string(),
+                    ))
+                })
+                .cloned()
+                .collect();
+
+            apply_manifest_edits(manifest, &deduped)?;
         }
 
         Ok(())
@@ -363,6 +380,44 @@ mod tests {
                 .iter()
                 .all(|u| matches!(u.unit, Unit::Project { .. })),
             "renamed rand07 usages should map to project manifests, not workspace"
+        );
+    }
+
+    #[test]
+    fn target_workspace_inherited_stays_workspace_unit() {
+        let registry = init_workspace_demo();
+        let packages = registry.packages().unwrap();
+
+        let anyhow = packages
+            .into_iter()
+            .find(|p| p.purl.name() == "anyhow")
+            .expect("anyhow should be in packages");
+
+        assert!(
+            anyhow
+                .usages
+                .iter()
+                .any(|u| matches!(u.unit, Unit::Workspace { .. })),
+            "workspace-inherited anyhow usages should include workspace unit"
+        );
+    }
+
+    #[test]
+    fn target_non_workspace_dep_stays_project_unit() {
+        let registry = init_workspace_demo();
+        let packages = registry.packages().unwrap();
+
+        let tokio = packages
+            .into_iter()
+            .find(|p| p.purl.name() == "tokio")
+            .expect("tokio should be in packages");
+
+        assert!(
+            tokio
+                .usages
+                .iter()
+                .any(|u| matches!(u.unit, Unit::Project { .. })),
+            "target non-workspace tokio usage should include project unit"
         );
     }
 }

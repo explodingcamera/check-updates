@@ -16,8 +16,8 @@ type Purl = purl::GenericPurl<String>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RegistryCachePolicy {
-    #[default]
     PreferLocal,
+    #[default]
     Refresh,
     NoCache,
 }
@@ -83,9 +83,9 @@ impl CheckUpdates {
 
     pub fn packages(&self) -> Result<Packages, Error> {
         let mut res: Packages = Default::default();
-        // Track (unit, package_name, req) to deduplicate entries where the same
-        // package appears in multiple dep-kind sections with the same version.
-        let mut seen: HashSet<(Unit, String, String)> = HashSet::new();
+        // Track (unit, package_name, req, kind) to deduplicate while still
+        // preserving distinct dep sections in output.
+        let mut seen: HashSet<(Unit, String, String, DepKind)> = HashSet::new();
         for package in self.cargo.packages()? {
             for usage in &package.usages {
                 // Wildcard requirements have nothing to update.
@@ -96,6 +96,7 @@ impl CheckUpdates {
                     usage.unit.clone(),
                     package.purl.name().to_string(),
                     usage.req.to_string(),
+                    usage.kind,
                 );
                 if !seen.insert(key) {
                     continue;

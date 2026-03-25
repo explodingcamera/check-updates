@@ -29,22 +29,22 @@ pub struct Args {
     #[arg(
         long = "cache",
         value_enum,
-        default_value_t = RegistryCacheMode::PreferLocal,
+        default_value_t = RegistryCacheMode::Refresh,
         help = "Cache mode"
     )]
     pub cache: RegistryCacheMode,
 
+    #[arg(short = 'u', long, help = "Update version requirements in Cargo.toml")]
+    pub update: bool,
+
     #[arg(
-        short = 'u',
+        short = 'U',
         long,
         help = "Update version requirements in Cargo.toml and run cargo update"
     )]
-    pub update: bool,
-
-    #[arg(short = 'U', long, help = "Update version requirements in Cargo.toml")]
     pub upgrade: bool,
 
-    #[arg(long, help = "Only upgrade to semver-compatible versions")]
+    #[arg(short = 'c', long, help = "Only upgrade to semver-compatible versions")]
     pub compatible: bool,
 
     #[arg(long, help = "Compact interactive mode (fewer spacing lines)")]
@@ -56,7 +56,7 @@ pub struct Args {
     #[arg(
         short,
         long,
-        help = "Only check specific packages (can be specified multiple times)"
+        help = "Only check specific workspace package(s) (can be specified multiple times)"
     )]
     pub package: Vec<String>,
 

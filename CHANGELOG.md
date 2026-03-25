@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- ## [Unreleased] -->
 
+## [v0.1.1] - 2026-03-25
+
+### Added
+
+- Added `-c` alias for `--compatible`
+- Added crate aliases to cli output
+
+### Changed
+
+- Changed the default cache mode to `refresh`
+- Fixed updates for `[target.'cfg(...)'.dependencies]` sections
+- Fixed issue with workspace-inherited dependencies being incorrectly updated
+- `-p/--package` now filters workspace packages
+
 ## [v0.1.0] - 2026-03-19
 
 ### Added

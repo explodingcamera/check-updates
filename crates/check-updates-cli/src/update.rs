@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::path::Path;
 
 use check_updates::{Package, Packages, Unit, Usage};
 use console::Style;
 use semver::VersionReq;
 
 use crate::version::{
-    VersionBump, VersionStrategy, build_new_req, colorize_req, current_version, is_version_yanked,
-    resolve_version, version_bump,
+    build_new_req, colorize_req, current_version, is_version_yanked, resolve_version, version_bump,
+    VersionBump, VersionStrategy,
 };
 
 pub struct Update<'a> {
@@ -18,6 +19,13 @@ pub struct Update<'a> {
     pub yanked: bool,
     pub usage: &'a Usage,
     pub package: &'a Package,
+}
+
+fn display_name(update: &Update<'_>) -> String {
+    match update.usage.rename.as_deref() {
+        Some(alias) if alias != update.name => format!("{} ({alias})", update.name),
+        _ => update.name.to_string(),
+    }
 }
 
 pub fn resolve_updates<'a>(
@@ -31,7 +39,7 @@ pub fn resolve_updates<'a>(
         for (req, _dep_kind, package) in entries {
             let name = package.purl.name();
 
-            if !filter.is_empty() && !filter.iter().any(|f| f == name) {
+            if !matches_filter(filter, unit) {
                 continue;
             }
 
@@ -81,6 +89,33 @@ pub fn resolve_updates<'a>(
     result
 }
 
+pub(crate) fn unit_matches_filter(unit: &Unit, filter: &str) -> bool {
+    match unit {
+        Unit::Project { name, .. } => filter == name,
+        Unit::Workspace { manifest } => {
+            filter == "workspace"
+                || workspace_root_name(manifest).is_some_and(|name| name == filter)
+        }
+        Unit::Global => filter == "global",
+    }
+}
+
+fn matches_filter(filter: &[String], unit: &Unit) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+
+    filter.iter().any(|f| unit_matches_filter(unit, f))
+}
+
+fn workspace_root_name(manifest: &Path) -> Option<String> {
+    manifest
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(ToString::to_string)
+}
+
 /// Format a single update as an aligned, colored line.
 pub fn format_update_line(
     update: &Update,
@@ -91,15 +126,16 @@ pub fn format_update_line(
     let mut line = String::new();
     let f = &mut line;
 
+    let plain_display_name = display_name(update);
     let name_display = update
         .package
         .repository
         .as_ref()
-        .map(|url| hyperlink(&normalize_repo_url(url), update.name))
-        .unwrap_or_else(|| update.name.to_string());
+        .map(|url| hyperlink(&normalize_repo_url(url), &plain_display_name))
+        .unwrap_or_else(|| plain_display_name.clone());
 
     // Pad manually since hyperlink escape codes don't count as visible width
-    let padding = name_width.saturating_sub(update.name.len());
+    let padding = name_width.saturating_sub(plain_display_name.len());
     let _ = write!(f, " {}{:>padding$}", name_display, "");
 
     let cur_req_str = update.current_req.to_string();
@@ -156,7 +192,11 @@ pub fn print_summary(updates: &BTreeMap<&Unit, Vec<Update<'_>>>) {
         }
         first = false;
 
-        let name_w = unit_updates.iter().map(|u| u.name.len()).max().unwrap_or(0);
+        let name_w = unit_updates
+            .iter()
+            .map(|u| display_name(u).len())
+            .max()
+            .unwrap_or(0);
         let cur_w = unit_updates
             .iter()
             .map(|u| u.current_req.to_string().len() + if u.yanked { 9 } else { 0 })

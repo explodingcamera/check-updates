@@ -105,6 +105,10 @@ pub fn is_version_yanked(versions: &[PackageVersion], current: Option<&Version>)
 
 /// Build a new `VersionReq` preserving the operator prefix and version shape.
 pub fn build_new_req(old_req: &VersionReq, new_version: &Version) -> VersionReq {
+    if old_req.comparators.len() != 1 {
+        return old_req.clone();
+    }
+
     let old_str = old_req.to_string();
     let digit_pos = old_str.find(|c: char| c.is_ascii_digit()).unwrap_or(0);
     let prefix = &old_str[..digit_pos];
@@ -501,5 +505,13 @@ mod tests {
         // Bare "1.2" gets normalized to "^1.2"
         let req: VersionReq = "1.2".parse().unwrap();
         assert_eq!(req.to_string(), "^1.2");
+    }
+
+    #[test]
+    fn test_build_new_req_complex_chain_is_unchanged() {
+        let old: VersionReq = ">=1.0, <2.0".parse().unwrap();
+        let new_ver = Version::parse("3.4.5").unwrap();
+        let result = build_new_req(&old, &new_ver);
+        assert_eq!(result.to_string(), old.to_string());
     }
 }
