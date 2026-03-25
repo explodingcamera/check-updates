@@ -6,13 +6,13 @@ default-members=["crates/check-updates-cli"]
 [workspace.package]
 edition="2024"
 rust-version="1.93"
-version="0.1.0"
+version="0.2.0"
 repository="https://github.com/explodingcamera/check-updates"
 authors=["Henry Gressmann <crates@henrygressmann.de>"]
 license="MIT OR Apache-2.0"
 
 [workspace.dependencies]
-check-updates={path="crates/check-updates", version="0.1.0"}
+check-updates={path="crates/check-updates", version="0.2.0"}
 
 cargo_metadata="0.23"
 crates-index="3.13"
