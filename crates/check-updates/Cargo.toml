@@ -11,7 +11,9 @@ readme="../../README.md"
 [dependencies]
 cargo_metadata.workspace=true
 crates-index.workspace=true
-curl.workspace=true
+reqwest.workspace=true
+tokio={workspace=true, features=["macros", "rt-multi-thread"]}
+
 http.workspace=true
 purl.workspace=true
 semver.workspace=true

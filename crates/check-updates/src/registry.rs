@@ -20,7 +20,7 @@ disponent::declare!(
 
     pub(crate) trait RegistryImpl {
         /// Get the locally installed packages for this registry
-        fn packages(&self) -> Result<impl IntoIterator<Item = Package>, RegistryError>;
+        async fn packages(&self) -> Result<Vec<Package>, RegistryError>;
 
         /// Update the locally installed versions of the given packages to the one specified
         fn update_versions<'a>(

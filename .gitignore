@@ -1,3 +1,5 @@
 /target
 examples/**/Cargo.lock
 examples/**/target
+dist/
+.intentionally-empty-file.o

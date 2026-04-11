@@ -31,10 +31,8 @@ pub enum CargoError {
     Index(#[from] crates_index::Error),
     #[error("HTTP request failed: {0}")]
     Http(#[from] http::Error),
-    #[error("curl error: {0}")]
-    Curl(#[from] curl::Error),
-    #[error("curl multi error: {0}")]
-    CurlMulti(#[from] curl::MultiError),
+    #[error("request error: {0}")]
+    Reqwest(#[from] reqwest::Error),
     #[error("manifest is not writable: {0}")]
     ReadOnly(PathBuf),
 }
@@ -50,7 +48,7 @@ impl CargoRegistry {
 }
 
 impl super::RegistryImpl for CargoRegistry {
-    fn packages(&self) -> Result<impl IntoIterator<Item = Package>, RegistryError> {
+    async fn packages(&self) -> Result<Vec<Package>, RegistryError> {
         let total_start = Instant::now();
 
         let index = SparseIndex::new_cargo_default().map_err(CargoError::from)?;
@@ -125,7 +123,7 @@ impl super::RegistryImpl for CargoRegistry {
         );
 
         if !requests.is_empty() {
-            let mut responses = fetch::fetch_all(self.state.multi(), requests);
+            let mut responses = fetch::fetch_all(self.state.client(), requests).await;
 
             for name in names {
                 if versions.contains_key(&name) {
@@ -166,7 +164,7 @@ impl super::RegistryImpl for CargoRegistry {
             })
             .collect();
 
-        let packages: Vec<Package> = build_packages(
+        let packages = build_packages(
             &members,
             &versions,
             &workspace_root_manifest,
@@ -276,17 +274,17 @@ mod tests {
         CargoRegistry::new(State::new(Some(root), crate::Options::default()).into())
     }
 
-    #[test]
-    fn fetch_this_workspace() {
+    #[tokio::test]
+    async fn fetch_this_workspace() {
         let registry = init();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
         assert!(packages.into_iter().any(|p| p.purl.name() == "clap"));
     }
 
-    #[test]
-    fn workspace_deps_use_workspace_unit() {
+    #[tokio::test]
+    async fn workspace_deps_use_workspace_unit() {
         let registry = init();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         // All deps in this project use `workspace = true`, so every usage
         // should point at the workspace root Cargo.toml via Unit::Workspace.
@@ -302,10 +300,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn workspace_unit_has_path() {
+    #[tokio::test]
+    async fn workspace_unit_has_path() {
         let registry = init();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         let any_workspace_usage = packages
             .into_iter()
@@ -321,10 +319,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn dep_kinds_are_set() {
+    #[tokio::test]
+    async fn dep_kinds_are_set() {
         let registry = init();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         // semver is a normal dependency of check-updates
         let semver = packages
@@ -338,10 +336,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn crate_meta_populated() {
+    #[tokio::test]
+    async fn crate_meta_populated() {
         let registry = init();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         // clap is a well-known crate that has a repository field
         let clap = packages
@@ -355,10 +353,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn renamed_deps_are_not_mistaken_for_workspace_inherited() {
+    #[tokio::test]
+    async fn renamed_deps_are_not_mistaken_for_workspace_inherited() {
         let registry = init_workspace_demo();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         let rand = packages
             .into_iter()
@@ -383,10 +381,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn target_workspace_inherited_stays_workspace_unit() {
+    #[tokio::test]
+    async fn target_workspace_inherited_stays_workspace_unit() {
         let registry = init_workspace_demo();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         let anyhow = packages
             .into_iter()
@@ -402,10 +400,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn target_non_workspace_dep_stays_project_unit() {
+    #[tokio::test]
+    async fn target_non_workspace_dep_stays_project_unit() {
         let registry = init_workspace_demo();
-        let packages = registry.packages().unwrap();
+        let packages = registry.packages().await.unwrap();
 
         let tokio = packages
             .into_iter()

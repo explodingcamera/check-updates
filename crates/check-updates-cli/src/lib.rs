@@ -8,7 +8,7 @@ mod interactive;
 mod update;
 mod version;
 
-pub fn run(args: cli::Args) {
+pub async fn run(args: cli::Args) {
     env_logger::Builder::new()
         .filter_level(if args.verbose {
             log::LevelFilter::Debug
@@ -45,11 +45,11 @@ pub fn run(args: cli::Args) {
         },
     };
     let check_updates = CheckUpdates::with_options(args.root.clone(), options);
-    let packages = match check_updates.packages() {
+    let packages = match check_updates.packages().await {
         Ok(p) => p,
         Err(e) => {
             spinner.finish_and_clear();
-            log::error!("{e}");
+            log::error!("Failed to fetch package data: {e}");
             std::process::exit(1);
         }
     };

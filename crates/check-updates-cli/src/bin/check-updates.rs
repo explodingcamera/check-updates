@@ -1,6 +1,7 @@
 use check_updates_cli::cli::Args;
 use clap::Parser;
 
-fn main() {
-    check_updates_cli::run(Args::parse());
+#[tokio::main]
+async fn main() {
+    check_updates_cli::run(Args::parse()).await;
 }

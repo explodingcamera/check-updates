@@ -3,21 +3,22 @@ use std::path::PathBuf;
 use check_updates::{CheckUpdates, Options};
 use semver::{Version, VersionReq};
 
-fn main() {
-    if let Err(err) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(err) = run().await {
         eprintln!("error: {err}");
         std::process::exit(1);
     }
 }
 
-fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::args_os()
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("examples/cargo/workspace-demo"));
 
     let checker = CheckUpdates::with_options(Some(root), Options::default());
-    let packages = checker.packages()?;
+    let packages = checker.packages().await?;
 
     let mut total = 0usize;
 

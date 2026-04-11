@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use curl::multi::Multi;
+use reqwest::Client;
 use semver::VersionReq;
 
 use crate::registry::*;
@@ -28,24 +28,26 @@ pub struct Options {
 }
 
 pub struct State {
-    multi: Multi,
+    client: Client,
     root: Option<PathBuf>,
     registry_cache_policy: RegistryCachePolicy,
 }
 
 impl State {
     pub fn new(root: Option<PathBuf>, options: Options) -> Self {
-        let mut multi = Multi::new();
-        multi.pipelining(false, true).ok();
+        let client = Client::builder()
+            .http2_adaptive_window(true)
+            .build()
+            .expect("failed to initialize HTTP client");
         Self {
-            multi,
+            client,
             root,
             registry_cache_policy: options.registry_cache_policy,
         }
     }
 
-    pub fn multi(&self) -> &Multi {
-        &self.multi
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     pub fn root(&self) -> Option<&PathBuf> {
@@ -60,7 +62,7 @@ impl State {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("registry error: {0}")]
-    Registry(#[from] registry::RegistryError),
+    Registry(#[from] RegistryError),
 }
 
 pub struct CheckUpdates {
@@ -81,12 +83,12 @@ impl CheckUpdates {
         }
     }
 
-    pub fn packages(&self) -> Result<Packages, Error> {
+    pub async fn packages(&self) -> Result<Packages, Error> {
         let mut res: Packages = Default::default();
         // Track (unit, package_name, req, kind) to deduplicate while still
         // preserving distinct dep sections in output.
         let mut seen: HashSet<(Unit, String, String, DepKind)> = HashSet::new();
-        for package in self.cargo.packages()? {
+        for package in self.cargo.packages().await? {
             for usage in &package.usages {
                 // Wildcard requirements have nothing to update.
                 if usage.req == VersionReq::STAR {

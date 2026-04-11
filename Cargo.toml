@@ -6,17 +6,18 @@ default-members=["crates/check-updates-cli"]
 [workspace.package]
 edition="2024"
 rust-version="1.93"
-version="0.2.1"
+version="0.3.0"
 repository="https://github.com/explodingcamera/check-updates"
 authors=["Henry Gressmann <crates@henrygressmann.de>"]
 license="MIT OR Apache-2.0"
 
 [workspace.dependencies]
-check-updates={path="crates/check-updates", version="0.2.0"}
+check-updates={path="crates/check-updates", version="^0.3.0"}
 
 cargo_metadata="0.23"
 crates-index="3.13"
-curl={version="0.4", features=["http2"]}
+reqwest={version="0.13", default-features=false, features=["http2", "native-tls"]}
+tokio="1.48"
 http="1.4"
 purl="0.1"
 semver="1.0"
@@ -42,6 +43,7 @@ edition="2024"
 [dependencies]
 check-updates.workspace=true
 semver.workspace=true
+tokio={workspace=true, features=["macros", "rt-multi-thread"]}
 
 [profile.release]
 strip=true
@@ -54,5 +56,3 @@ codegen-units=1
 [profile.dist]
 inherits="release"
 lto="thin"
-
-# RUSTFLAGS="-Zlocation-detail=none" cargo +nightly zigbuild -Z build-std=std,panic_abort -Z build-std-features=optimize_for_size --bin check-updates --release
