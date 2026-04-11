@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- ## [Unreleased] -->
 
+## [v0.2.1] - 2026-04-11
+
+### Fixed
+
+- Fixed an issue where spaces were being added around `=` in Cargo.toml
+
 ## [v0.2.0] - 2026-03-25
 
 ### Added

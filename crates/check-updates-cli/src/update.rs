@@ -7,8 +7,8 @@ use console::Style;
 use semver::VersionReq;
 
 use crate::version::{
-    build_new_req, colorize_req, current_version, is_version_yanked, resolve_version, version_bump,
-    VersionBump, VersionStrategy,
+    VersionBump, VersionStrategy, build_new_req, colorize_req, current_version, is_version_yanked,
+    resolve_version, version_bump,
 };
 
 pub struct Update<'a> {

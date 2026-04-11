@@ -135,13 +135,21 @@ fn apply_single_edit(
     }
 
     if entry.is_str() {
+        let decor = entry.as_value().map(|v| v.decor().clone());
         *entry = toml_edit::value(version_str);
+        if let (Some(decor), Some(value)) = (decor, entry.as_value_mut()) {
+            *value.decor_mut() = decor;
+        }
         return true;
     }
 
     if let Some(table) = entry.as_table_like_mut() {
         if let Some(v) = table.get_mut("version") {
+            let decor = v.as_value().map(|value| value.decor().clone());
             *v = toml_edit::value(version_str);
+            if let (Some(decor), Some(value)) = (decor, v.as_value_mut()) {
+                *value.decor_mut() = decor;
+            }
             return true;
         }
 
@@ -477,5 +485,22 @@ serde = "2.0"
                 .unwrap(),
             "2.0"
         );
+    }
+
+    #[test]
+    fn edit_preserves_no_space() {
+        let input = r#"
+[dependencies]
+serde="1.0"
+"#;
+        let result = edit_manifest(input, &[make_edit("dependencies", "serde", "^2.0")]).unwrap();
+        assert!(result.contains("serde=\"2.0\""));
+
+        let input = r#"
+[dependencies]
+serde={version="1.0",features=["derive"]}
+"#;
+        let result = edit_manifest(input, &[make_edit("dependencies", "serde", "^2.0")]).unwrap();
+        assert!(result.contains("version=\"2.0\""));
     }
 }
