@@ -1,0 +1,77 @@
+name: Release Build
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (for example v1.2.3)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      - uses: taiki-e/create-gh-release-action@f67cf7b2dadd83d36b981e674a6b08063997ce68 # v1.10.0
+        with:
+          draft: true
+          allow-missing-changelog: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+  upload-assets:
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: check-updates-amd64-linux
+            archive-format: tar.xz
+          - target: x86_64-pc-windows-gnu
+            os: windows-latest
+            archive: check-updates-amd64-windows
+            archive-format: zip
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive: check-updates-arm64-linux
+            archive-format: tar.xz
+          - target: aarch64-apple-darwin
+            os: macos-14
+            archive: check-updates-arm64-darwin
+            archive-format: tar.xz
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+      - uses: actions-rust-lang/setup-rust-toolchain@150fca883cd4034361b621bd4e6a9d34e5143606 # v1.15.4
+        with:
+          cache: false
+          target: ${{ matrix.target }}
+      - uses: taiki-e/upload-rust-binary-action@10c1cf6a3da113ad4e60018e386570529aa5f1d3 # v1.30.0
+        with:
+          bin: check-updates
+          package: check-updates-cli
+          target: ${{ matrix.target }}
+          archive: ${{ matrix.archive }}
+          tar-xz: ${{ matrix.archive-format == 'tar.xz' && 'all' || 'none' }}
+          zip: ${{ matrix.archive-format == 'zip' && 'all' || 'none' }}
+          tar: none
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
