@@ -65,7 +65,7 @@ jobs:
           target: ${{ matrix.target }}
       - uses: taiki-e/upload-rust-binary-action@10c1cf6a3da113ad4e60018e386570529aa5f1d3 # v1.30.0
         with:
-          bin: check-updates
+          bin: check-updates,cargo-check-updates
           package: check-updates-cli
           target: ${{ matrix.target }}
           archive: ${{ matrix.archive }}

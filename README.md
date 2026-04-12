@@ -14,6 +14,12 @@ _Currently only supports `Crates.io`, but support for other package managers / r
 cargo install check-updates-cli
 ```
 
+To install prebuilt binaries with [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall), use:
+
+```bash
+cargo binstall check-updates-cli
+```
+
 [![asciicast](https://asciinema.org/a/AJrlkt3ugmIvq4Y1.svg)](https://asciinema.org/a/AJrlkt3ugmIvq4Y1)
 
 ## CLI usage
