@@ -37,6 +37,14 @@ impl State {
     pub fn new(root: Option<PathBuf>, options: Options) -> Self {
         let client = Client::builder()
             .http2_adaptive_window(true)
+            .user_agent(concat!(
+                env!("CARGO_PKG_NAME"),
+                "/",
+                env!("CARGO_PKG_VERSION"),
+                " (+",
+                env!("CARGO_PKG_REPOSITORY"),
+                ")"
+            ))
             .build()
             .expect("failed to initialize HTTP client");
         Self {

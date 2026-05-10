@@ -10,7 +10,7 @@ readme="../../README.md"
 
 [dependencies]
 cargo_metadata.workspace=true
-crates-index.workspace=true
+tame-index.workspace=true
 reqwest.workspace=true
 tokio={workspace=true, features=["macros", "rt-multi-thread"]}
 

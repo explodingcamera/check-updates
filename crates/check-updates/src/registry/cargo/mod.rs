@@ -6,8 +6,8 @@ use std::{
 };
 
 use cargo_metadata::{CargoOpt, MetadataCommand};
-use crates_index::SparseIndex;
 use semver::VersionReq;
+use tame_index::index::{FileLock, IndexLocation, IndexUrl, SparseIndex};
 use thiserror::Error;
 
 use crate::{
@@ -28,7 +28,7 @@ pub enum CargoError {
     #[error("failed to get cargo metadata: {0}")]
     Metadata(String),
     #[error("failed to access crates.io index: {0}")]
-    Index(#[from] crates_index::Error),
+    Index(#[from] tame_index::Error),
     #[error("HTTP request failed: {0}")]
     Http(#[from] http::Error),
     #[error("request error: {0}")]
@@ -51,7 +51,9 @@ impl super::RegistryImpl for CargoRegistry {
     async fn packages(&self) -> Result<Vec<Package>, RegistryError> {
         let total_start = Instant::now();
 
-        let index = SparseIndex::new_cargo_default().map_err(CargoError::from)?;
+        let index = SparseIndex::new(IndexLocation::new(IndexUrl::CratesIoSparse))
+            .map_err(CargoError::from)?;
+        let lock = FileLock::unlocked();
 
         let metadata_cmd = || {
             let mut cmd = MetadataCommand::new();
@@ -89,12 +91,14 @@ impl super::RegistryImpl for CargoRegistry {
 
         for name in &names {
             if use_local_cache {
-                match index.crate_from_cache(name) {
-                    Ok(krate) => {
-                        versions.insert(name.clone(), versions_from_crate(&krate));
+                let crate_name = name.as_str().try_into().map_err(CargoError::from)?;
+                match index.cached_krate(crate_name, &lock) {
+                    Ok(Some(krate)) => {
+                        versions.insert(name.clone(), versions_from_krate(&krate));
                         cache_hits += 1;
                         continue;
                     }
+                    Ok(None) => {}
                     Err(err) => {
                         log::debug!("cargo.packages: cache miss for '{name}': {err}");
                     }
@@ -102,9 +106,12 @@ impl super::RegistryImpl for CargoRegistry {
             }
 
             let request = index
-                .make_cache_request(name)
-                .map_err(|e| e.to_string())
-                .and_then(|b| b.body(()).map_err(|e| e.to_string()));
+                .make_remote_request(
+                    name.as_str().try_into().map_err(CargoError::from)?,
+                    None,
+                    &lock,
+                )
+                .map_err(|e| e.to_string());
 
             match request {
                 Ok(req) => requests.push((name.clone(), req)),
@@ -140,9 +147,20 @@ impl super::RegistryImpl for CargoRegistry {
                 };
 
                 let write_cache_entry = !matches!(policy, RegistryCachePolicy::NoCache);
-                match parse_versions(&index, &name, response, write_cache_entry) {
-                    Ok(v) => {
-                        versions.insert(name, v);
+                let crate_name = match name.as_str().try_into() {
+                    Ok(name) => name,
+                    Err(e) => {
+                        log::warn!("failed to parse crate name '{name}': {e}");
+                        continue;
+                    }
+                };
+
+                match index.parse_remote_response(crate_name, response, write_cache_entry, &lock) {
+                    Ok(Some(krate)) => {
+                        versions.insert(name, versions_from_krate(&krate));
+                    }
+                    Ok(None) => {
+                        log::debug!("no crate data returned for '{name}'");
                     }
                     Err(e) => {
                         log::warn!("failed to parse versions for '{name}': {e}");

@@ -3,15 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crates_index::SparseIndex;
 use semver::Version;
+use tame_index::IndexKrate;
 
 use crate::{
     Purl,
     package::{DepKind, Package, PackageVersion, Unit, Usage},
 };
-
-use super::CargoError;
 
 #[derive(Default)]
 pub(super) struct InheritedDeps {
@@ -52,32 +50,19 @@ pub(super) fn workspace_members(
         .collect()
 }
 
-pub(super) fn parse_versions(
-    index: &SparseIndex,
-    name: &str,
-    response: http::Response<Vec<u8>>,
-    write_cache_entry: bool,
-) -> Result<Vec<PackageVersion>, CargoError> {
-    let krate = index.parse_cache_response(name, response, write_cache_entry)?;
-
-    let Some(krate) = krate else {
-        log::debug!("no crate data returned for '{name}'");
-        return Ok(Vec::new());
-    };
-
-    Ok(versions_from_crate(&krate))
-}
-
-pub(super) fn versions_from_crate(krate: &crates_index::Crate) -> Vec<PackageVersion> {
+pub(super) fn versions_from_krate(krate: &IndexKrate) -> Vec<PackageVersion> {
     krate
-        .versions()
+        .versions
         .iter()
         .filter_map(|v| {
-            let version = Version::parse(v.version()).ok()?;
+            let version = Version::parse(&v.version).ok()?;
             Some(PackageVersion {
                 version,
                 yanked: v.is_yanked(),
-                features: v.features().clone(),
+                features: v
+                    .features()
+                    .map(|(name, members)| (name.clone(), members.clone()))
+                    .collect(),
                 rust_version: v.rust_version().and_then(|s| Version::parse(s).ok()),
             })
         })
