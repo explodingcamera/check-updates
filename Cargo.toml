@@ -32,7 +32,6 @@ clap_complete="4.6"
 toml_edit="0.25"
 indicatif="0.18"
 console={version="0.16", default-features=false}
-ctrlc="3.5"
 
 [package]
 name="check-updates-root"

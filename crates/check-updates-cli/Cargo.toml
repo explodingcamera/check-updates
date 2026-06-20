@@ -26,7 +26,6 @@ console.workspace=true
 log.workspace=true
 env_logger.workspace=true
 semver.workspace=true
-ctrlc.workspace=true
 tokio.workspace=true
 
 [package.metadata.binstall]

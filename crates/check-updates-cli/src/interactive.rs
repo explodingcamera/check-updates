@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
 
 use check_updates::{Package, Unit, Usage};
 use console::{Key, Term, style};
@@ -62,18 +61,6 @@ struct InlineSelect<'a, 't> {
     colors: bool,
 }
 
-struct CtrlCGuard {
-    active: Arc<Mutex<bool>>,
-}
-
-impl Drop for CtrlCGuard {
-    fn drop(&mut self) {
-        if let Ok(mut active) = self.active.lock() {
-            *active = false;
-        }
-    }
-}
-
 impl<'a, 't> InlineSelect<'a, 't> {
     fn new(
         term: &'t Term,
@@ -133,12 +120,10 @@ impl<'a, 't> InlineSelect<'a, 't> {
     }
 
     fn run(mut self) -> std::io::Result<Vec<(&'a Usage, &'a Package, VersionReq)>> {
-        let ctrlc_guard = self.install_ctrlc_handler();
         loop {
             let key = match self.term.read_key() {
                 Ok(key) => key,
                 Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
-                    drop(ctrlc_guard);
                     self.clear()?;
                     std::process::exit(130);
                 }
@@ -150,40 +135,20 @@ impl<'a, 't> InlineSelect<'a, 't> {
                 Key::ArrowDown | Key::Char('j') => self.move_cursor(1),
                 Key::Char(' ') => self.toggle_and_advance(),
                 Key::Enter => {
-                    drop(ctrlc_guard);
                     self.clear()?;
                     return Ok(self.collect_selected());
                 }
                 Key::Escape | Key::Char('q') => {
-                    drop(ctrlc_guard);
                     self.clear()?;
                     std::process::exit(0);
+                }
+                Key::CtrlC => {
+                    self.clear()?;
+                    std::process::exit(130);
                 }
                 _ => {}
             }
         }
-    }
-
-    fn install_ctrlc_handler(&self) -> Option<CtrlCGuard> {
-        let term = self.term.clone();
-        let lines = self.total_lines();
-        let active = Arc::new(Mutex::new(true));
-        let active_for_handler = Arc::clone(&active);
-
-        ctrlc::set_handler(move || {
-            let should_clear = active_for_handler
-                .lock()
-                .map(|active| *active)
-                .unwrap_or(false);
-            if should_clear {
-                let _ = term.show_cursor();
-                let _ = term.move_cursor_up(lines.saturating_sub(1));
-                let _ = term.clear_to_end_of_screen();
-            }
-            std::process::exit(130);
-        })
-        .ok()
-        .map(|_| CtrlCGuard { active })
     }
 
     fn total_lines(&self) -> usize {
