@@ -16,7 +16,7 @@ check-updates={path="crates/check-updates", version="^0.3.1"}
 
 cargo_metadata="0.23"
 tame-index="0.26"
-reqwest={version="0.13", default-features=false, features=["http2", "native-tls"]}
+reqwest={version="0.13", default-features=false, features=["http2", "rustls"]}
 tokio="1.52"
 http="1.4"
 purl="0.1"
