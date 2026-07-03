@@ -39,13 +39,57 @@ pub fn resolve_updates<'a>(
         for (req, _dep_kind, package) in entries {
             let name = package.purl.name();
 
-            if !matches_filter(filter, unit) {
+            if !filter.is_empty() && !filter.iter().any(|f| unit_matches_filter(unit, f)) {
                 continue;
             }
 
             let current = current_version(req);
-            let Some(latest) = resolve_version(&package.versions, req, strategy, current.as_ref())
+            let Some(usage) = package
+                .usages
+                .iter()
+                .find(|u| u.unit == *unit && u.req == *req)
             else {
+                continue;
+            };
+            let supported_toolchain_version = package
+                .usages
+                .iter()
+                .filter(|u| u.unit == *unit && u.req == *req)
+                .filter_map(|u| u.supported_toolchain_version.clone())
+                .min();
+            let latest = resolve_version(
+                &package.versions,
+                req,
+                strategy,
+                current.as_ref(),
+                supported_toolchain_version.as_ref(),
+            );
+
+            if let Some(supported_toolchain_version) = supported_toolchain_version.as_ref()
+                && !strategy.ignore_toolchain_version
+            {
+                let ignored_strategy = VersionStrategy {
+                    compatible: strategy.compatible,
+                    pre: strategy.pre,
+                    ignore_toolchain_version: true,
+                };
+                let unrestricted = resolve_version(
+                    &package.versions,
+                    req,
+                    &ignored_strategy,
+                    current.as_ref(),
+                    None,
+                );
+
+                if unrestricted.as_ref() > latest.as_ref() {
+                    log::info!(
+                        "skipping newer {name} versions requiring a newer toolchain than {}",
+                        supported_toolchain_version
+                    );
+                }
+            }
+
+            let Some(latest) = latest else {
                 continue;
             };
             let new_req = build_new_req(req, &latest);
@@ -61,14 +105,6 @@ pub fn resolve_updates<'a>(
                 .unwrap_or(VersionBump::Major);
 
             let yanked = is_version_yanked(&package.versions, current.as_ref());
-
-            let Some(usage) = package
-                .usages
-                .iter()
-                .find(|u| u.unit == *unit && u.req == *req)
-            else {
-                continue;
-            };
 
             result.entry(unit).or_default().push(Update {
                 name,
@@ -98,14 +134,6 @@ pub(crate) fn unit_matches_filter(unit: &Unit, filter: &str) -> bool {
         }
         Unit::Global => filter == "global",
     }
-}
-
-fn matches_filter(filter: &[String], unit: &Unit) -> bool {
-    if filter.is_empty() {
-        return true;
-    }
-
-    filter.iter().any(|f| unit_matches_filter(unit, f))
 }
 
 fn workspace_root_name(manifest: &Path) -> Option<String> {

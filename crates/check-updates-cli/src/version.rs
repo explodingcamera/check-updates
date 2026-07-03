@@ -7,9 +7,7 @@ use crate::cli::Args;
 pub struct VersionStrategy {
     pub compatible: bool,
     pub pre: bool,
-    // TODO: use this to filter versions by MSRV once Unit has rust-version
-    // #[allow(dead_code)]
-    // pub ignore_rust_version: bool,
+    pub ignore_toolchain_version: bool,
 }
 
 impl VersionStrategy {
@@ -17,7 +15,7 @@ impl VersionStrategy {
         Self {
             compatible: args.compatible,
             pre: args.pre,
-            // ignore_rust_version: args.ignore_rust_version,
+            ignore_toolchain_version: args.ignore_toolchain_version,
         }
     }
 }
@@ -58,6 +56,7 @@ pub fn resolve_version(
     req: &VersionReq,
     strategy: &VersionStrategy,
     current: Option<&Version>,
+    supported_toolchain_version: Option<&Version>,
 ) -> Option<Version> {
     versions
         .iter()
@@ -75,11 +74,31 @@ pub fn resolve_version(
                 .filter(|c| !c.pre.is_empty())
                 .is_some_and(|c| same_base(&v.version, c))
         })
-        // TODO: once Unit has MSRV, use ignore_rust_version flag to control filtering
         .filter(|v| !strategy.compatible || req.matches(&v.version))
+        .filter(|v| supports_toolchain(v, strategy, supported_toolchain_version))
         .map(|v| &v.version)
         .max()
         .cloned()
+}
+
+fn supports_toolchain(
+    version: &PackageVersion,
+    strategy: &VersionStrategy,
+    supported_toolchain_version: Option<&Version>,
+) -> bool {
+    if strategy.ignore_toolchain_version {
+        return true;
+    }
+
+    let Some(supported) = supported_toolchain_version else {
+        return true;
+    };
+
+    let Some(required) = &version.required_toolchain_version else {
+        return true;
+    };
+
+    required <= supported
 }
 
 fn same_base(a: &Version, b: &Version) -> bool {
@@ -192,6 +211,16 @@ pub fn colorize_req(curr_req_str: &str, new_req_str: &str, bump: VersionBump) ->
 mod tests {
     use super::*;
 
+    fn package_version(version: &str, required_toolchain_version: Option<&str>) -> PackageVersion {
+        PackageVersion {
+            version: Version::parse(version).unwrap(),
+            yanked: false,
+            features: Default::default(),
+            required_toolchain_version: required_toolchain_version
+                .map(|version| Version::parse(version).unwrap()),
+        }
+    }
+
     #[test]
     fn test_version_bump_major() {
         let from = Version::parse("1.2.3").unwrap();
@@ -289,7 +318,7 @@ mod tests {
             version: Version::parse("1.2.3").unwrap(),
             yanked: true,
             features: Default::default(),
-            rust_version: None,
+            required_toolchain_version: None,
         }];
         let current = Version::parse("1.2.3").unwrap();
         assert!(is_version_yanked(&versions, Some(&current)));
@@ -301,7 +330,7 @@ mod tests {
             version: Version::parse("1.2.3").unwrap(),
             yanked: false,
             features: Default::default(),
-            rust_version: None,
+            required_toolchain_version: None,
         }];
         let current = Version::parse("1.2.3").unwrap();
         assert!(!is_version_yanked(&versions, Some(&current)));
@@ -314,28 +343,29 @@ mod tests {
                 version: Version::parse("1.0.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("2.0.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("3.0.0-alpha.1").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
         ];
         let req: VersionReq = "^1.0.0".parse().unwrap();
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
+            ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None),
+            resolve_version(&versions, &req, &strategy, None, None),
             Some(Version::parse("2.0.0").unwrap())
         );
     }
@@ -347,28 +377,29 @@ mod tests {
                 version: Version::parse("1.0.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("1.5.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("2.0.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
         ];
         let req: VersionReq = "^1.0.0".parse().unwrap();
         let strategy = VersionStrategy {
             compatible: true,
             pre: false,
+            ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None),
+            resolve_version(&versions, &req, &strategy, None, None),
             Some(Version::parse("1.5.0").unwrap())
         );
     }
@@ -380,22 +411,23 @@ mod tests {
                 version: Version::parse("1.0.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("2.0.0").unwrap(),
                 yanked: true,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
         ];
         let req: VersionReq = "^1.0.0".parse().unwrap();
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
+            ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None),
+            resolve_version(&versions, &req, &strategy, None, None),
             Some(Version::parse("1.0.0").unwrap())
         );
     }
@@ -407,22 +439,23 @@ mod tests {
                 version: Version::parse("1.0.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("2.0.0-alpha.1").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
         ];
         let req: VersionReq = "^1.0.0".parse().unwrap();
         let strategy = VersionStrategy {
             compatible: false,
             pre: true,
+            ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None),
+            resolve_version(&versions, &req, &strategy, None, None),
             Some(Version::parse("2.0.0-alpha.1").unwrap())
         );
     }
@@ -434,25 +467,26 @@ mod tests {
                 version: Version::parse("1.0.0-alpha.1").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("1.0.0-alpha.2").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
             PackageVersion {
                 version: Version::parse("1.0.1-alpha.1").unwrap(),
                 yanked: false,
                 features: Default::default(),
-                rust_version: None,
+                required_toolchain_version: None,
             },
         ];
         let req: VersionReq = "^1.0.0-alpha.1".parse().unwrap();
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
+            ignore_toolchain_version: false,
         };
 
         assert_eq!(
@@ -460,9 +494,62 @@ mod tests {
                 &versions,
                 &req,
                 &strategy,
-                Some(&Version::parse("1.0.0-alpha.1").unwrap())
+                Some(&Version::parse("1.0.0-alpha.1").unwrap()),
+                None,
             ),
             Some(Version::parse("1.0.0-alpha.2").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_resolve_version_filters_by_toolchain_version() {
+        let versions = vec![
+            package_version("1.0.0", None),
+            package_version("2.0.0", Some("1.70.0")),
+            package_version("3.0.0", Some("1.80.0")),
+        ];
+        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let strategy = VersionStrategy {
+            compatible: false,
+            pre: false,
+            ignore_toolchain_version: false,
+        };
+
+        assert_eq!(
+            resolve_version(
+                &versions,
+                &req,
+                &strategy,
+                None,
+                Some(&Version::parse("1.70.0").unwrap()),
+            ),
+            Some(Version::parse("2.0.0").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_resolve_version_can_ignore_toolchain_version() {
+        let versions = vec![
+            package_version("1.0.0", None),
+            package_version("2.0.0", Some("1.70.0")),
+            package_version("3.0.0", Some("1.80.0")),
+        ];
+        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let strategy = VersionStrategy {
+            compatible: false,
+            pre: false,
+            ignore_toolchain_version: true,
+        };
+
+        assert_eq!(
+            resolve_version(
+                &versions,
+                &req,
+                &strategy,
+                None,
+                Some(&Version::parse("1.70.0").unwrap()),
+            ),
+            Some(Version::parse("3.0.0").unwrap())
         );
     }
 

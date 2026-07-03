@@ -97,6 +97,7 @@ pub struct Usage {
     pub req: VersionReq,
     pub kind: DepKind,
     pub rename: Option<String>,
+    pub supported_toolchain_version: Option<semver::Version>,
 }
 
 #[derive(Debug, Clone)]
@@ -115,7 +116,7 @@ pub struct PackageVersion {
     pub version: semver::Version,
     pub yanked: bool,
     pub features: HashMap<String, Vec<String>>,
-    pub rust_version: Option<semver::Version>,
+    pub required_toolchain_version: Option<semver::Version>,
 }
 
 #[cfg(test)]

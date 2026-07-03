@@ -77,7 +77,7 @@ pub async fn run(args: cli::Args) {
         if updates.is_empty() {
             update::print_summary(&updates);
             if args.upgrade {
-                run_cargo_update(args.root.as_deref());
+                run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
             }
             return;
         }
@@ -92,7 +92,7 @@ pub async fn run(args: cli::Args) {
 
         if selected.is_empty() {
             if args.upgrade {
-                run_cargo_update(args.root.as_deref());
+                run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
             }
             println!("No packages selected.");
             return;
@@ -107,7 +107,7 @@ pub async fn run(args: cli::Args) {
         }
 
         if args.upgrade {
-            run_cargo_update(args.root.as_deref());
+            run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
         }
 
         println!(
@@ -123,7 +123,7 @@ pub async fn run(args: cli::Args) {
 
         if updates.is_empty() {
             if args.upgrade {
-                run_cargo_update(args.root.as_deref());
+                run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
             }
             return;
         }
@@ -140,7 +140,7 @@ pub async fn run(args: cli::Args) {
         }
 
         if args.upgrade {
-            run_cargo_update(args.root.as_deref());
+            run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
         }
 
         println!(
@@ -166,9 +166,13 @@ pub async fn run(args: cli::Args) {
     }
 }
 
-fn run_cargo_update(root: Option<&Path>) {
+fn run_cargo_update(root: Option<&Path>, ignore_toolchain_version: bool) {
     let mut command = std::process::Command::new("cargo");
     command.arg("update");
+
+    if ignore_toolchain_version {
+        command.arg("--ignore-rust-version");
+    }
 
     if let Some(root) = root {
         command.current_dir(root);

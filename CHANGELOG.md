@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added automatic toolchain-version-aware resolving, which can be disabled with `--ignore-toolchain-version`
+
 ### Fixed
 
 - Fixed `--upgrade` running `cargo update` outside `--root`

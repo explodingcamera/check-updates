@@ -54,6 +54,13 @@ pub struct Args {
     pub pre: bool,
 
     #[arg(
+        long,
+        alias = "ignore-rust-version",
+        help = "Ignore package toolchain version requirements"
+    )]
+    pub ignore_toolchain_version: bool,
+
+    #[arg(
         short,
         long,
         help = "Only check specific workspace package(s) (can be specified multiple times)"

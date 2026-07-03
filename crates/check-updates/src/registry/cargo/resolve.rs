@@ -61,7 +61,7 @@ pub(super) fn versions_from_krate(krate: &IndexKrate) -> Vec<PackageVersion> {
                     .features()
                     .map(|(name, members)| (name.clone(), members.clone()))
                     .collect(),
-                rust_version: v.rust_version().and_then(|s| Version::parse(s).ok()),
+                required_toolchain_version: v.rust_version().and_then(|s| Version::parse(s).ok()),
             })
         })
         .collect()
@@ -250,6 +250,7 @@ pub(super) fn build_packages(
                     req: dep.req.clone(),
                     kind,
                     rename: dep.rename.clone(),
+                    supported_toolchain_version: member.rust_version.clone(),
                 };
 
                 packages
