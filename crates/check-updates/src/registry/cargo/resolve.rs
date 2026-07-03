@@ -1,7 +1,5 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::{Path, PathBuf},
-};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use semver::Version;
 use tame_index::IndexKrate;

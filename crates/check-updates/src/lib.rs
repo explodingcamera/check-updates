@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 use reqwest::Client;
 use semver::VersionReq;
@@ -13,6 +14,8 @@ mod registry;
 pub use package::{DepKind, Package, PackageVersion, Packages, Unit, Usage};
 
 type Purl = purl::GenericPurl<String>;
+
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RegistryCachePolicy {
@@ -37,6 +40,7 @@ impl State {
     pub fn new(root: Option<PathBuf>, options: Options) -> Self {
         let client = Client::builder()
             .http2_adaptive_window(true)
+            .timeout(HTTP_TIMEOUT)
             .user_agent(concat!(
                 env!("CARGO_PKG_NAME"),
                 "/",

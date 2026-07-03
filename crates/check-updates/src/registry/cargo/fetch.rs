@@ -2,18 +2,36 @@ use std::collections::HashMap;
 
 use crate::registry::cargo::CargoError;
 use http::{Request, Response, StatusCode};
+use tokio::task::JoinSet;
+
+const MAX_CONCURRENT_FETCHES: usize = 16;
 
 pub async fn fetch_all(
     client: &reqwest::Client,
     requests: Vec<(String, Request<()>)>,
-) -> HashMap<String, Result<Response<Vec<u8>>, CargoError>> {
-    let mut results = HashMap::with_capacity(requests.len());
-    for (name, request) in requests {
-        let response = fetch_one(client, request).await;
-        results.insert(name, response);
+) -> Result<HashMap<String, Response<Vec<u8>>>, CargoError> {
+    let total = requests.len();
+    let mut requests = requests.into_iter();
+    let mut tasks = JoinSet::new();
+    let mut results = HashMap::with_capacity(total);
+
+    while results.len() < total {
+        while tasks.len() < MAX_CONCURRENT_FETCHES {
+            let Some((name, request)) = requests.next() else {
+                break;
+            };
+
+            let client = client.clone();
+            tasks.spawn(async move { (name, fetch_one(&client, request).await) });
+        }
+
+        if let Some(result) = tasks.join_next().await {
+            let (name, response) = result?;
+            results.insert(name, response?);
+        }
     }
 
-    results
+    Ok(results)
 }
 
 async fn fetch_one(

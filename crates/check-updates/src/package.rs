@@ -1,11 +1,11 @@
-use crate::Purl;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::fmt;
+use std::path::{Path, PathBuf};
+
 use semver::VersionReq;
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    fmt,
-    path::{Path, PathBuf},
-};
+
+use crate::Purl;
 
 /// A unit of package management, such as a project, a workspace, or a global environment
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

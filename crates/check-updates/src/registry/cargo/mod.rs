@@ -1,9 +1,7 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    rc::Rc,
-    time::Instant,
-};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::Instant;
 
 use cargo_metadata::{CargoOpt, MetadataCommand};
 use semver::VersionReq;
@@ -33,6 +31,8 @@ pub enum CargoError {
     Http(#[from] http::Error),
     #[error("request error: {0}")]
     Reqwest(#[from] reqwest::Error),
+    #[error("fetch task failed: {0}")]
+    FetchTask(#[from] tokio::task::JoinError),
     #[error("manifest is not writable: {0}")]
     ReadOnly(PathBuf),
 }
@@ -130,7 +130,7 @@ impl super::RegistryImpl for CargoRegistry {
         );
 
         if !requests.is_empty() {
-            let mut responses = fetch::fetch_all(self.state.client(), requests).await;
+            let mut responses = fetch::fetch_all(self.state.client(), requests).await?;
 
             for name in names {
                 if versions.contains_key(&name) {
@@ -138,11 +138,7 @@ impl super::RegistryImpl for CargoRegistry {
                 }
 
                 let response = match responses.remove(&name) {
-                    Some(Ok(r)) => r,
-                    Some(Err(e)) => {
-                        log::warn!("failed to fetch index for '{name}': {e}");
-                        continue;
-                    }
+                    Some(r) => r,
                     None => continue,
                 };
 
