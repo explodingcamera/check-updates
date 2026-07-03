@@ -2,6 +2,7 @@ use check_updates::{CheckUpdates, Options, RegistryCachePolicy};
 use clap::CommandFactory;
 use console::Style;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::path::Path;
 
 pub mod cli;
 mod interactive;
@@ -76,7 +77,7 @@ pub async fn run(args: cli::Args) {
         if updates.is_empty() {
             update::print_summary(&updates);
             if args.upgrade {
-                run_cargo_update();
+                run_cargo_update(args.root.as_deref());
             }
             return;
         }
@@ -91,7 +92,7 @@ pub async fn run(args: cli::Args) {
 
         if selected.is_empty() {
             if args.upgrade {
-                run_cargo_update();
+                run_cargo_update(args.root.as_deref());
             }
             println!("No packages selected.");
             return;
@@ -106,7 +107,7 @@ pub async fn run(args: cli::Args) {
         }
 
         if args.upgrade {
-            run_cargo_update();
+            run_cargo_update(args.root.as_deref());
         }
 
         println!(
@@ -122,7 +123,7 @@ pub async fn run(args: cli::Args) {
 
         if updates.is_empty() {
             if args.upgrade {
-                run_cargo_update();
+                run_cargo_update(args.root.as_deref());
             }
             return;
         }
@@ -139,7 +140,7 @@ pub async fn run(args: cli::Args) {
         }
 
         if args.upgrade {
-            run_cargo_update();
+            run_cargo_update(args.root.as_deref());
         }
 
         println!(
@@ -165,11 +166,21 @@ pub async fn run(args: cli::Args) {
     }
 }
 
-fn run_cargo_update() {
-    let status = std::process::Command::new("cargo")
-        .arg("update")
-        .status()
-        .expect("failed to run cargo update");
+fn run_cargo_update(root: Option<&Path>) {
+    let mut command = std::process::Command::new("cargo");
+    command.arg("update");
+
+    if let Some(root) = root {
+        command.current_dir(root);
+    }
+
+    let status = match command.status() {
+        Ok(status) => status,
+        Err(e) => {
+            log::error!("failed to run cargo update: {e}");
+            std::process::exit(1);
+        }
+    };
 
     if !status.success() {
         log::error!("cargo update failed");

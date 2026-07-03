@@ -26,8 +26,16 @@ pub async fn fetch_all(
         }
 
         if let Some(result) = tasks.join_next().await {
-            let (name, response) = result?;
-            results.insert(name, response?);
+            let (name, response) = result.map_err(|e| {
+                log::warn!("fetch task failed: {e}");
+                CargoError::from(e)
+            })?;
+            let response = response.map_err(|e| {
+                log::warn!("failed to fetch index for '{name}': {e}");
+                e
+            })?;
+
+            results.insert(name, response);
         }
     }
 

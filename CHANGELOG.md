@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `--upgrade` running `cargo update` outside `--root`
+- Fixed ordering of distinct units with the same package name
+
 ### Changed
 
 - Rust crates are now fetched concurrently, improving performance for large workspaces
+- Registry HTTP requests now have a timeout
 - `aws-lc` is now used for TLS, replacing `openssl` for HTTP requests
 
 ## [v0.3.1] - 2026-05-10

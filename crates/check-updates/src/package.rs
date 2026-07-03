@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -21,13 +22,22 @@ pub enum Unit {
 impl Ord for Unit {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
-            (Unit::Workspace { .. }, Unit::Workspace { .. }) => std::cmp::Ordering::Equal,
-            (Unit::Workspace { .. }, _) => std::cmp::Ordering::Less,
-            (_, Unit::Workspace { .. }) => std::cmp::Ordering::Greater,
-            (Unit::Global, Unit::Global) => std::cmp::Ordering::Equal,
-            (Unit::Global, _) => std::cmp::Ordering::Greater,
-            (_, Unit::Global) => std::cmp::Ordering::Less,
-            _ => self.name().cmp(&other.name()),
+            (Unit::Workspace { manifest: a }, Unit::Workspace { manifest: b }) => a.cmp(b),
+            (Unit::Workspace { .. }, _) => Ordering::Less,
+            (_, Unit::Workspace { .. }) => Ordering::Greater,
+            (
+                Unit::Project {
+                    name: a,
+                    manifest: am,
+                },
+                Unit::Project {
+                    name: b,
+                    manifest: bm,
+                },
+            ) => a.cmp(b).then_with(|| am.cmp(bm)),
+            (Unit::Project { .. }, Unit::Global) => Ordering::Less,
+            (Unit::Global, Unit::Project { .. }) => Ordering::Greater,
+            (Unit::Global, Unit::Global) => Ordering::Equal,
         }
     }
 }
@@ -106,4 +116,36 @@ pub struct PackageVersion {
     pub yanked: bool,
     pub features: HashMap<String, Vec<String>>,
     pub rust_version: Option<semver::Version>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unit_ordering_is_consistent_with_equality() {
+        let units = [
+            Unit::Workspace {
+                manifest: PathBuf::from("a/Cargo.toml"),
+            },
+            Unit::Workspace {
+                manifest: PathBuf::from("b/Cargo.toml"),
+            },
+            Unit::Project {
+                manifest: PathBuf::from("a/crates/app/Cargo.toml"),
+                name: "app".to_string(),
+            },
+            Unit::Project {
+                manifest: PathBuf::from("b/crates/app/Cargo.toml"),
+                name: "app".to_string(),
+            },
+            Unit::Global,
+        ];
+
+        for left in &units {
+            for right in &units {
+                assert_eq!(left.cmp(right) == Ordering::Equal, left == right);
+            }
+        }
+    }
 }
