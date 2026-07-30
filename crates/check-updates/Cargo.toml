@@ -1,23 +1,22 @@
 [package]
-name="check-updates"
-version.workspace=true
-authors.workspace=true
-edition.workspace=true
-license.workspace=true
-repository.workspace=true
-description="CLI for checking for updates to your Cargo dependencies"
-readme="../../README.md"
+name = "check-updates"
+version.workspace = true
+edition.workspace = true
+description = "CLI for checking for updates to your Cargo dependencies"
+readme = "../../README.md"
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-cargo_metadata.workspace=true
-tame-index.workspace=true
-reqwest.workspace=true
-tokio={workspace=true, features=["macros", "rt-multi-thread"]}
+cargo_metadata.workspace = true
+reqwest.workspace = true
+tame-index.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
-http.workspace=true
-purl.workspace=true
-semver.workspace=true
-log.workspace=true
-thiserror.workspace=true
-toml_edit.workspace=true
-disponent.workspace=true
+disponent.workspace = true
+http.workspace = true
+log.workspace = true
+purl.workspace = true
+semver.workspace = true
+thiserror.workspace = true
+toml_edit.workspace = true

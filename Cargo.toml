@@ -1,57 +1,59 @@
+[package]
+name = "check-updates-root"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
 [workspace]
-resolver="3"
-members=["crates/*"]
-default-members=["crates/check-updates-cli"]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/check-updates-cli"]
 
 [workspace.package]
-edition="2024"
-rust-version="1.96"
-version="0.4.0"
-repository="https://github.com/explodingcamera/check-updates"
-authors=["Henry Gressmann <crates@henrygressmann.de>"]
-license="MIT OR Apache-2.0"
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.96"
+repository = "https://github.com/explodingcamera/check-updates"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-check-updates={path="crates/check-updates", version="^0.4.0"}
+check-updates = { path = "crates/check-updates", version = "^0.4.0" }
 
-cargo_metadata="0.23"
-tame-index="0.26"
-reqwest={version="0.13", default-features=false, features=["http2", "rustls"]}
-tokio="1.52"
-http="1.4"
-purl="0.1"
-semver="1.0"
-jiff="0.2"
-log="0.4"
-env_logger="0.11"
-thiserror="2.0"
-disponent="0.2"
+cargo_metadata = "0.23"
+disponent = "0.2"
+env_logger = "0.11"
+http = "1.5"
+jiff = "0.2"
+log = "0.4"
+purl = "0.1"
+reqwest = { version = "0.13", default-features = false, features = [
+  "http2",
+  "rustls"
+] }
+semver = "1.0"
+tame-index = "0.26"
+thiserror = "2.0"
+tokio = "1.53"
 
-clap={version="4.6", features=["derive", "color", "unstable-styles"]}
-clap_complete="4.6"
-toml_edit="0.25"
-indicatif="0.18"
-console={version="0.16", default-features=false}
-
-[package]
-name="check-updates-root"
-publish=false
-version="0.1.0"
-edition="2024"
+clap = { version = "4.6", features = ["color", "derive", "unstable-styles"] }
+clap_complete = "4.6"
+console = { version = "0.16", default-features = false }
+indicatif = "0.18"
+toml_edit = "0.25"
 
 [dependencies]
-check-updates.workspace=true
-semver.workspace=true
-tokio={workspace=true, features=["macros", "rt-multi-thread"]}
+check-updates.workspace = true
+semver.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [profile.release]
-strip=true
-debug=false
-lto="fat"
-panic="abort"
-codegen-units=1
+debug = false
+strip = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
 
 # The profile that 'dist' will build with
 [profile.dist]
-inherits="release"
-lto="thin"
+inherits = "release"
+lto = "thin"
