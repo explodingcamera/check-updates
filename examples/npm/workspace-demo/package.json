@@ -1,0 +1,8 @@
+{
+  "name": "workspace-demo",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "dependencies": {
+    "is-number": "^7.0.0"
+  }
+}

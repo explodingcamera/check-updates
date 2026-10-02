@@ -1,12 +1,12 @@
-use check_updates::{CheckUpdates, Options, RegistryCachePolicy};
 use clap::CommandFactory;
-use console::Style;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::path::Path;
 
 pub mod cli;
+mod cmd;
+#[cfg(feature = "cargo")]
 mod interactive;
+#[cfg(feature = "cargo")]
 mod update;
+#[cfg(feature = "cargo")]
 mod version;
 
 pub async fn run(args: cli::Args) {
@@ -28,166 +28,81 @@ pub async fn run(args: cli::Args) {
         return;
     }
 
-    let strategy = version::VersionStrategy::from_args(&args);
-
-    let spinner = ProgressBar::new_spinner().with_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.cyan} {msg}")
-            .expect("valid template"),
-    );
-    spinner.set_message("Fetching package data...");
-    spinner.enable_steady_tick(std::time::Duration::from_millis(80));
-
-    let options = Options {
-        registry_cache_policy: match args.cache {
-            cli::RegistryCacheMode::PreferLocal => RegistryCachePolicy::PreferLocal,
-            cli::RegistryCacheMode::Refresh => RegistryCachePolicy::Refresh,
-            cli::RegistryCacheMode::NoCache => RegistryCachePolicy::NoCache,
-        },
-    };
-    let check_updates = CheckUpdates::with_options(args.root.clone(), options);
-    let packages = match check_updates.packages().await {
-        Ok(p) => p,
-        Err(e) => {
-            spinner.finish_and_clear();
-            log::error!("Failed to fetch package data: {e}");
+    let root = args
+        .root
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().expect("current directory"));
+    let has_npm = root.join("package.json").is_file();
+    let has_cargo = root.join("Cargo.toml").is_file();
+    #[cfg(feature = "npm")]
+    if has_npm && args.upgrade {
+        if let Err(error) = check_updates::npm::package_manager(&root) {
+            log::error!("Failed to select JavaScript package manager: {error}");
             std::process::exit(1);
         }
-    };
-
-    spinner.finish_and_clear();
-
-    if !args.package.is_empty() {
-        for name in &args.package {
-            if !packages
-                .keys()
-                .any(|unit| update::unit_matches_filter(unit, name))
-            {
-                log::error!("workspace package '{}' not found", name);
-                std::process::exit(1);
-            }
-        }
     }
-
-    let updates = update::resolve_updates(&packages, &strategy, &args.package);
-    let has_updates = !updates.is_empty();
-    let fail_on_updates = args.fail_on_updates;
-
-    if args.interactive {
-        if updates.is_empty() {
-            update::print_summary(&updates);
-            if args.upgrade {
-                run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
-            }
-            return;
-        }
-
-        let selected = match interactive::prompt_updates(&updates, args.compact) {
-            Ok(s) => s,
-            Err(e) => {
-                log::error!("{e}");
-                std::process::exit(1);
-            }
-        };
-
-        if selected.is_empty() {
-            if args.upgrade {
-                run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
-            }
-            println!("No packages selected.");
-            return;
-        }
-
-        let count = selected.len();
-        if let Err(e) =
-            check_updates.update_versions(selected.iter().map(|(u, p, r)| (*u, *p, r.clone())))
-        {
-            log::error!("{e}");
-            std::process::exit(1);
-        }
-
-        if args.upgrade {
-            run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
-        }
-
-        println!(
-            "\n Upgraded {count} {}.",
-            if count == 1 {
-                "dependency"
-            } else {
-                "dependencies"
-            }
-        );
-    } else if args.update || args.upgrade {
-        update::print_summary(&updates);
-
-        if updates.is_empty() {
-            if args.upgrade {
-                run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
-            }
-            return;
-        }
-
-        let count: usize = updates.values().map(|v| v.len()).sum();
-
-        if let Err(e) = check_updates.update_versions(updates.values().flat_map(|unit_updates| {
-            unit_updates
-                .iter()
-                .map(|u| (u.usage, u.package, u.new_req.clone()))
-        })) {
-            log::error!("{e}");
-            std::process::exit(1);
-        }
-
-        if args.upgrade {
-            run_cargo_update(args.root.as_deref(), args.ignore_toolchain_version);
-        }
-
-        println!(
-            "\n Upgraded {count} {}.",
-            if count == 1 {
-                "dependency"
-            } else {
-                "dependencies"
-            }
-        );
-    } else {
-        update::print_summary(&updates);
-        if !updates.is_empty() {
-            println!(
-                "\n{}",
-                Style::new().dim().apply_to("Run with -u or -U to upgrade.")
-            );
-        }
-    }
-
-    if fail_on_updates && has_updates {
-        std::process::exit(2);
-    }
-}
-
-fn run_cargo_update(root: Option<&Path>, ignore_toolchain_version: bool) {
-    let mut command = std::process::Command::new("cargo");
-    command.arg("update");
-
-    if ignore_toolchain_version {
-        command.arg("--ignore-rust-version");
-    }
-
-    if let Some(root) = root {
-        command.current_dir(root);
-    }
-
-    let status = match command.status() {
-        Ok(status) => status,
-        Err(e) => {
-            log::error!("failed to run cargo update: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    if !status.success() {
-        log::error!("cargo update failed");
+    if (has_npm && !has_cargo && !cfg!(feature = "npm"))
+        || (has_cargo && !has_npm && !cfg!(feature = "cargo"))
+    {
+        log::error!("The backend for {} is not enabled", root.display());
         std::process::exit(1);
+    }
+    #[cfg(feature = "cargo")]
+    let (cargo_updates, cargo_packages) = if has_cargo || !has_npm {
+        match cmd::cargo::run(&args, has_npm && cfg!(feature = "npm")).await {
+            Ok(result) => (result.has_updates, result.matched_packages),
+            Err(error) => {
+                log::error!("Failed to check Cargo dependencies: {error}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        (false, Vec::new())
+    };
+    #[cfg(all(feature = "cargo", not(feature = "npm")))]
+    let _ = &cargo_packages;
+    #[cfg(not(feature = "cargo"))]
+    let cargo_updates = false;
+    #[cfg(all(not(feature = "cargo"), feature = "npm"))]
+    let cargo_packages: Vec<String> = Vec::new();
+
+    #[cfg(feature = "npm")]
+    let npm_updates = if has_npm {
+        match cmd::npm::check(
+            &root,
+            &args,
+            &cargo_packages,
+            has_cargo && cfg!(feature = "cargo"),
+        )
+        .await
+        {
+            Ok(has_updates) => has_updates,
+            Err(error) => {
+                log::error!("Failed to check npm dependencies: {error}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        false
+    };
+    #[cfg(not(feature = "npm"))]
+    let npm_updates = false;
+
+    if has_cargo
+        && has_npm
+        && cfg!(feature = "cargo")
+        && cfg!(feature = "npm")
+        && !cargo_updates
+        && !npm_updates
+    {
+        println!("No packages need version requirement updates.");
+    }
+
+    if !has_cargo && !has_npm && !cfg!(feature = "cargo") {
+        log::error!("No Cargo.toml or package.json found in {}", root.display());
+        std::process::exit(1);
+    }
+    if args.fail_on_updates && (npm_updates || cargo_updates) {
+        std::process::exit(2);
     }
 }

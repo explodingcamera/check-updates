@@ -5,7 +5,7 @@ use semver::Version;
 use tame_index::IndexKrate;
 
 use crate::{
-    Purl,
+    Purl, Requirement,
     package::{DepKind, Package, PackageVersion, Unit, Usage},
 };
 
@@ -247,7 +247,7 @@ pub(super) fn build_packages(
 
                 let usage = Usage {
                     unit,
-                    req: dep.req.clone(),
+                    req: Requirement::from_cargo(dep.req.clone()),
                     kind,
                     rename: dep.rename.clone(),
                     supported_toolchain_version: member.rust_version.clone(),

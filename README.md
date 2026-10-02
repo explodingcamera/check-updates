@@ -4,9 +4,7 @@
 [<img alt="crates.io" src="https://img.shields.io/crates/v/check-updates.svg?style=flat-square&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/check-updates)
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/explodingcamera/check-updates/ci.yaml?branch=main&style=flat-square" height="20">](https://github.com/explodingcamera/check-updates/actions?query=branch%3Amain)
 
-> check-updates is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool.
-
-_Currently only supports `Crates.io`, but support for other package managers / registries is planned for the future._
+> check-updates is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool. Currencly supports only Cargo and npm projects.
 
 ## Installation
 
@@ -28,16 +26,20 @@ Main ways to use it:
 
 - Run `check-updates` to see available dependency updates.
 - Use `check-updates -i` for interactive selection.
-- Use `check-updates -u` to update version requirements in `Cargo.toml`.
-- Use `check-updates -U` to update requirements and run `cargo update`.
+- Use `check-updates -u` to update version requirements in `Cargo.toml` or `package.json`.
+- Use `check-updates -U` to update requirements and installed JavaScript dependencies, or run `cargo update` in Cargo projects.
+- Add `--lockfile-only` to `-U` to skip installing JavaScript dependencies.
+
+Registry checks currently support only crates.io and the public npm registry (registry.npmjs.org). Other registries are not supported.
 
 Flags and options:
 
 | Short | Long                         | Description                                               |
 | ----- | ---------------------------- | --------------------------------------------------------- |
 | `-i`  | `--interactive`              | Interactive selection UI                                  |
-| `-u`  | `--update`                   | Update version requirements in `Cargo.toml`               |
-| `-U`  | `--upgrade`                  | Update requirements and run `cargo update`                |
+| `-u`  | `--update`                   | Update version requirements in project manifests          |
+| `-U`  | `--upgrade`                  | Update requirements and installed dependencies            |
+| -     | `--lockfile-only`            | With `-U`, skip installing JavaScript dependencies        |
 | `-c`  | `--compatible`               | Only semver-compatible updates                            |
 | `-p`  | `--package <NAME>`           | Only check specific workspace package(s); repeat for more |
 | -     | `--root <DIR>`               | Root directory to search from                             |

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Added dependency checks and manifest updates for npm, pnpm, and Bun projects, including workspaces.
+- Added `cargo` and `npm` feature flags to the library and CLI.
+
 ## [v0.4.0] - 2026-07-03
 
 ### Added

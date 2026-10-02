@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
-use check_updates::{CheckUpdates, Options};
-use semver::{Version, VersionReq};
+use check_updates::{CheckUpdates, Options, VersionStrategy};
 
 #[tokio::main]
 async fn main() {
@@ -26,10 +25,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let mut printed_header = false;
 
         for (req, _kind, package) in entries {
-            let Some(current) = req_base_version(req) else {
+            let Some(current) = req.current_version() else {
                 continue;
             };
-            let Some(latest) = latest_stable(&package.versions) else {
+            let Some(latest) = package.latest(req, &VersionStrategy::stable(), None) else {
                 continue;
             };
             if latest <= &current {
@@ -48,18 +47,4 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\nFound {total} available upgrades.");
     Ok(())
-}
-
-fn req_base_version(req: &VersionReq) -> Option<Version> {
-    let s = req.to_string();
-    let stripped = s.trim_start_matches(|c: char| !c.is_ascii_digit());
-    Version::parse(stripped).ok()
-}
-
-fn latest_stable(versions: &[check_updates::PackageVersion]) -> Option<&Version> {
-    versions
-        .iter()
-        .filter(|v| !v.yanked && v.version.pre.is_empty())
-        .map(|v| &v.version)
-        .max()
 }

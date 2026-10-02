@@ -34,15 +34,26 @@ pub struct Args {
     )]
     pub cache: RegistryCacheMode,
 
-    #[arg(short = 'u', long, help = "Update version requirements in Cargo.toml")]
+    #[arg(
+        short = 'u',
+        long,
+        help = "Update version requirements in project manifests"
+    )]
     pub update: bool,
 
     #[arg(
         short = 'U',
         long,
-        help = "Update version requirements in Cargo.toml and run cargo update"
+        help = "Update requirements and installed dependencies"
     )]
     pub upgrade: bool,
+
+    #[arg(
+        long,
+        requires = "upgrade",
+        help = "Update lockfiles without installing JavaScript dependencies"
+    )]
+    pub lockfile_only: bool,
 
     #[arg(short = 'c', long, help = "Only upgrade to semver-compatible versions")]
     pub compatible: bool,

@@ -2,19 +2,15 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::Path;
 
-use check_updates::{Package, Packages, Unit, Usage};
+use check_updates::{Package, Packages, Requirement, Unit, Usage, VersionStrategy};
 use console::Style;
-use semver::VersionReq;
 
-use crate::version::{
-    VersionBump, VersionStrategy, build_new_req, colorize_req, current_version, is_version_yanked,
-    resolve_version, version_bump,
-};
+use crate::version::{VersionBump, colorize_req, version_bump};
 
 pub struct Update<'a> {
     pub name: &'a str,
-    pub current_req: &'a VersionReq,
-    pub new_req: VersionReq,
+    pub current_req: &'a Requirement,
+    pub new_req: Requirement,
     pub bump: VersionBump,
     pub yanked: bool,
     pub usage: &'a Usage,
@@ -43,7 +39,7 @@ pub fn resolve_updates<'a>(
                 continue;
             }
 
-            let current = current_version(req);
+            let current = req.current_version();
             let Some(usage) = package
                 .usages
                 .iter()
@@ -57,13 +53,7 @@ pub fn resolve_updates<'a>(
                 .filter(|u| u.unit == *unit && u.req == *req)
                 .filter_map(|u| u.supported_toolchain_version.clone())
                 .min();
-            let latest = resolve_version(
-                &package.versions,
-                req,
-                strategy,
-                current.as_ref(),
-                supported_toolchain_version.as_ref(),
-            );
+            let latest = package.latest(req, strategy, supported_toolchain_version.as_ref());
 
             if let Some(supported_toolchain_version) = supported_toolchain_version.as_ref()
                 && !strategy.ignore_toolchain_version
@@ -73,15 +63,9 @@ pub fn resolve_updates<'a>(
                     pre: strategy.pre,
                     ignore_toolchain_version: true,
                 };
-                let unrestricted = resolve_version(
-                    &package.versions,
-                    req,
-                    &ignored_strategy,
-                    current.as_ref(),
-                    None,
-                );
+                let unrestricted = package.latest(req, &ignored_strategy, None);
 
-                if unrestricted.as_ref() > latest.as_ref() {
+                if unrestricted > latest {
                     log::info!(
                         "skipping newer {name} versions requiring a newer toolchain than {}",
                         supported_toolchain_version
@@ -92,7 +76,9 @@ pub fn resolve_updates<'a>(
             let Some(latest) = latest else {
                 continue;
             };
-            let new_req = build_new_req(req, &latest);
+            let Some(new_req) = req.with_version(latest) else {
+                continue;
+            };
 
             // Skip if the requirement doesn't need to change
             if new_req == *req {
@@ -101,10 +87,12 @@ pub fn resolve_updates<'a>(
 
             let bump = current
                 .as_ref()
-                .map(|cur| version_bump(cur, &latest))
+                .map(|cur| version_bump(cur, latest))
                 .unwrap_or(VersionBump::Major);
 
-            let yanked = is_version_yanked(&package.versions, current.as_ref());
+            let yanked = current
+                .as_ref()
+                .is_some_and(|version| package.is_version_yanked(version));
 
             result.entry(unit).or_default().push(Update {
                 name,
@@ -200,13 +188,15 @@ pub fn format_update_line(
 
 /// Print the update table, grouped by unit.
 // TODO: maybe print this as a table / add a json output option
-pub fn print_summary(updates: &BTreeMap<&Unit, Vec<Update<'_>>>) {
+pub fn print_summary(updates: &BTreeMap<&Unit, Vec<Update<'_>>>, show_unit: bool) {
     if updates.is_empty() {
-        println!("No packages need version requirement updates.");
+        if !show_unit {
+            println!("No packages need version requirement updates.");
+        }
         return;
     }
 
-    let multi_unit = updates.len() > 1;
+    let multi_unit = show_unit || updates.len() > 1;
     let mut first = true;
 
     for (unit, unit_updates) in updates {
@@ -214,7 +204,18 @@ pub fn print_summary(updates: &BTreeMap<&Unit, Vec<Update<'_>>>) {
             if !first {
                 println!();
             }
-            println!("{}", Style::new().bold().apply_to(unit.name()));
+            let name = if show_unit {
+                match unit {
+                    Unit::Workspace { .. } => format!(
+                        "{} (cargo workspace)",
+                        unit.name().trim_end_matches(" (workspace)")
+                    ),
+                    _ => format!("{} (cargo)", unit.name()),
+                }
+            } else {
+                unit.name().to_string()
+            };
+            println!("{}", Style::new().bold().apply_to(name));
         } else if !first {
             println!();
         }

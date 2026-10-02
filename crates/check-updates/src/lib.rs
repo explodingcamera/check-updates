@@ -1,18 +1,36 @@
+#[cfg(not(any(feature = "cargo", feature = "npm")))]
+compile_error!("enable at least one backend feature: cargo or npm");
+
+#[cfg(feature = "cargo")]
 use std::collections::HashSet;
 use std::path::PathBuf;
+#[cfg(feature = "cargo")]
 use std::rc::Rc;
 use std::time::Duration;
 
 use reqwest::Client;
-use semver::VersionReq;
 
+#[cfg(feature = "cargo")]
 use crate::registry::*;
 
+#[cfg(any(feature = "cargo", feature = "npm"))]
 mod package;
 mod registry;
+#[cfg(any(feature = "cargo", feature = "npm"))]
+mod requirement;
 
-pub use package::{DepKind, Package, PackageVersion, Packages, Unit, Usage};
+#[cfg(any(feature = "cargo", feature = "npm"))]
+pub use package::{DepKind, Package, PackageVersion, Packages, Unit, Usage, VersionStrategy};
+#[cfg(feature = "npm")]
+pub use registry::npm;
+#[cfg(feature = "npm")]
+pub use requirement::NpmRequirementError;
+#[cfg(any(feature = "cargo", feature = "npm"))]
+pub use requirement::Requirement;
+/// Concrete published version shared by all supported registries.
+pub use semver::Version;
 
+#[cfg(any(feature = "cargo", feature = "npm"))]
 type Purl = purl::GenericPurl<String>;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -71,16 +89,19 @@ impl State {
     }
 }
 
+#[cfg(feature = "cargo")]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("registry error: {0}")]
     Registry(#[from] RegistryError),
 }
 
+#[cfg(feature = "cargo")]
 pub struct CheckUpdates {
     cargo: Registry,
 }
 
+#[cfg(feature = "cargo")]
 impl CheckUpdates {
     pub fn new(root: Option<PathBuf>) -> Self {
         Self::with_options(root, Options::default())
@@ -103,7 +124,7 @@ impl CheckUpdates {
         for package in self.cargo.packages().await? {
             for usage in &package.usages {
                 // Wildcard requirements have nothing to update.
-                if usage.req == VersionReq::STAR {
+                if usage.req.is_wildcard() {
                     continue;
                 }
                 let key = (
@@ -128,7 +149,7 @@ impl CheckUpdates {
     /// Update the locally installed versions of the given packages to the one specified
     pub fn update_versions<'a>(
         &self,
-        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, VersionReq)>,
+        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, Requirement)>,
     ) -> Result<(), Error> {
         self.cargo.update_versions(packages)?;
         Ok(())

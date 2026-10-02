@@ -1,4 +1,4 @@
-# CLI Examples
+# Cargo examples
 
 This directory contains sample Cargo projects you can use to test `check-updates` behavior.
 

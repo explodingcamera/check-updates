@@ -2,7 +2,7 @@
 name = "check-updates-cli"
 version.workspace = true
 edition.workspace = true
-description = "CLI for checking for updates to your Cargo dependencies"
+description = "CLI for checking for updates to Cargo and JavaScript dependencies"
 readme = "../../README.md"
 repository.workspace = true
 license.workspace = true
@@ -29,6 +29,11 @@ pkg-fmt = "txz"
 pkg-url = "{ repo }/releases/download/v{ version }/check-updates-arm64-darwin.tar.xz"
 pkg-fmt = "txz"
 
+[features]
+default = ["cargo", "npm"]
+cargo = ["check-updates/cargo", "dep:indicatif"]
+npm = ["check-updates/npm"]
+
 [[bin]]
 name = "cargo-check-updates"
 path = "src/bin/cargo-check-updates.rs"
@@ -38,12 +43,15 @@ name = "check-updates"
 path = "src/bin/check-updates.rs"
 
 [dependencies]
-check-updates.workspace = true
+check-updates = { workspace = true, default-features = false }
 clap.workspace = true
 clap_complete.workspace = true
-console.workspace = true
+console = { workspace = true, features = ["std"] }
 env_logger.workspace = true
-indicatif.workspace = true
+indicatif = { workspace = true, optional = true }
 log.workspace = true
-semver.workspace = true
 tokio.workspace = true
+
+[dev-dependencies]
+semver.workspace = true
+tempfile.workspace = true

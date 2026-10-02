@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
-use check_updates::{Package, Unit, Usage};
+use check_updates::{Package, Requirement, Unit, Usage};
 use console::{Key, Term, style};
-use semver::VersionReq;
 
 use crate::update::{Update, format_update_line};
 
@@ -10,7 +9,8 @@ use crate::update::{Update, format_update_line};
 pub fn prompt_updates<'a>(
     updates: &BTreeMap<&'a Unit, Vec<Update<'a>>>,
     compact: bool,
-) -> std::io::Result<Vec<(&'a Usage, &'a Package, VersionReq)>> {
+    mixed: bool,
+) -> std::io::Result<Vec<(&'a Usage, &'a Package, Requirement)>> {
     if updates.is_empty() {
         return Ok(Vec::new());
     }
@@ -32,7 +32,7 @@ pub fn prompt_updates<'a>(
         ));
     }
 
-    InlineSelect::new(&term, updates, compact)?.run()
+    InlineSelect::new(&term, updates, compact, mixed)?.run()
 }
 
 enum LineKind<'a> {
@@ -43,7 +43,7 @@ enum LineKind<'a> {
         label: String,
         usage: &'a Usage,
         package: &'a Package,
-        new_req: VersionReq,
+        new_req: Requirement,
     },
 }
 
@@ -66,6 +66,7 @@ impl<'a, 't> InlineSelect<'a, 't> {
         term: &'t Term,
         updates: &BTreeMap<&'a Unit, Vec<Update<'a>>>,
         compact: bool,
+        mixed: bool,
     ) -> std::io::Result<Self> {
         let (name_w, cur_w, new_w) = global_column_widths(updates, term);
 
@@ -80,7 +81,18 @@ impl<'a, 't> InlineSelect<'a, 't> {
                 lines.push(LineKind::Separator);
             }
             let group_line_idx = lines.len();
-            lines.push(LineKind::Group(unit.name().to_string()));
+            let group_name = if mixed {
+                match unit {
+                    Unit::Workspace { .. } => format!(
+                        "{} (cargo workspace)",
+                        unit.name().trim_end_matches(" (workspace)")
+                    ),
+                    _ => format!("{} (cargo)", unit.name()),
+                }
+            } else {
+                unit.name().to_string()
+            };
+            lines.push(LineKind::Group(group_name));
 
             for update in unit_updates {
                 update_line_for_cursor.push(lines.len());
@@ -119,7 +131,7 @@ impl<'a, 't> InlineSelect<'a, 't> {
         Ok(select)
     }
 
-    fn run(mut self) -> std::io::Result<Vec<(&'a Usage, &'a Package, VersionReq)>> {
+    fn run(mut self) -> std::io::Result<Vec<(&'a Usage, &'a Package, Requirement)>> {
         loop {
             let key = match self.term.read_key() {
                 Ok(key) => key,
@@ -232,7 +244,7 @@ impl<'a, 't> InlineSelect<'a, 't> {
         self.group_line_for_cursor[self.cursor] < start
     }
 
-    fn collect_selected(self) -> Vec<(&'a Usage, &'a Package, VersionReq)> {
+    fn collect_selected(self) -> Vec<(&'a Usage, &'a Package, Requirement)> {
         self.lines
             .into_iter()
             .filter_map(|line| match line {

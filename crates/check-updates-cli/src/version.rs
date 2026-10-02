@@ -1,24 +1,5 @@
-use check_updates::PackageVersion;
+use check_updates::Version;
 use console::Style;
-use semver::{Version, VersionReq};
-
-use crate::cli::Args;
-
-pub struct VersionStrategy {
-    pub compatible: bool,
-    pub pre: bool,
-    pub ignore_toolchain_version: bool,
-}
-
-impl VersionStrategy {
-    pub fn from_args(args: &Args) -> Self {
-        Self {
-            compatible: args.compatible,
-            pre: args.pre,
-            ignore_toolchain_version: args.ignore_toolchain_version,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionBump {
@@ -48,113 +29,6 @@ pub fn version_bump(from: &Version, to: &Version) -> VersionBump {
     } else {
         VersionBump::Patch
     }
-}
-
-/// Pick the best target version from published versions, filtered by strategy.
-pub fn resolve_version(
-    versions: &[PackageVersion],
-    req: &VersionReq,
-    strategy: &VersionStrategy,
-    current: Option<&Version>,
-    supported_toolchain_version: Option<&Version>,
-) -> Option<Version> {
-    versions
-        .iter()
-        .filter(|v| !v.yanked)
-        .filter(|v| {
-            if strategy.pre {
-                return true;
-            }
-
-            if v.version.pre.is_empty() {
-                return true;
-            }
-
-            current
-                .filter(|c| !c.pre.is_empty())
-                .is_some_and(|c| same_base(&v.version, c))
-        })
-        .filter(|v| !strategy.compatible || req.matches(&v.version))
-        .filter(|v| supports_toolchain(v, strategy, supported_toolchain_version))
-        .map(|v| &v.version)
-        .max()
-        .cloned()
-}
-
-fn supports_toolchain(
-    version: &PackageVersion,
-    strategy: &VersionStrategy,
-    supported_toolchain_version: Option<&Version>,
-) -> bool {
-    if strategy.ignore_toolchain_version {
-        return true;
-    }
-
-    let Some(supported) = supported_toolchain_version else {
-        return true;
-    };
-
-    let Some(required) = &version.required_toolchain_version else {
-        return true;
-    };
-
-    required <= supported
-}
-
-fn same_base(a: &Version, b: &Version) -> bool {
-    a.major == b.major && a.minor == b.minor && a.patch == b.patch
-}
-
-/// Extract the base version from a `VersionReq` (e.g. `^1.2.3` -> `1.2.3`).
-pub fn current_version(req: &VersionReq) -> Option<Version> {
-    let s = req.to_string();
-    let stripped = s.trim_start_matches(|c: char| !c.is_ascii_digit());
-    Version::parse(stripped).ok()
-}
-
-pub fn is_version_yanked(versions: &[PackageVersion], current: Option<&Version>) -> bool {
-    let Some(current) = current else {
-        return false;
-    };
-    versions
-        .iter()
-        .find(|v| v.version == *current)
-        .is_some_and(|v| v.yanked)
-}
-
-/// Build a new `VersionReq` preserving the operator prefix and version shape.
-pub fn build_new_req(old_req: &VersionReq, new_version: &Version) -> VersionReq {
-    if old_req.comparators.len() != 1 {
-        return old_req.clone();
-    }
-
-    let old_str = old_req.to_string();
-    let digit_pos = old_str.find(|c: char| c.is_ascii_digit()).unwrap_or(0);
-    let prefix = &old_str[..digit_pos];
-
-    if !new_version.pre.is_empty() {
-        return format!("{prefix}{new_version}")
-            .parse()
-            .expect("valid version req");
-    }
-
-    let version_part = &old_str[digit_pos..];
-
-    // Count how many components the original had (major, major.minor, or major.minor.patch)
-    let component_count = version_part.matches('.').count() + 1;
-
-    let new_version_str = match component_count {
-        1 => new_version.major.to_string(),
-        2 => format!("{}.{}", new_version.major, new_version.minor),
-        _ => format!(
-            "{}.{}.{}",
-            new_version.major, new_version.minor, new_version.patch
-        ),
-    };
-
-    format!("{prefix}{new_version_str}")
-        .parse()
-        .expect("valid version req")
 }
 
 pub fn bump_style(bump: VersionBump) -> Style {
@@ -210,6 +84,11 @@ pub fn colorize_req(curr_req_str: &str, new_req_str: &str, bump: VersionBump) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use check_updates::{PackageVersion, Requirement, VersionStrategy};
+
+    fn cargo_requirement(text: &str) -> Requirement {
+        Requirement::from_cargo(text.parse::<semver::VersionReq>().unwrap())
+    }
 
     fn package_version(version: &str, required_toolchain_version: Option<&str>) -> PackageVersion {
         PackageVersion {
@@ -255,85 +134,61 @@ mod tests {
 
     #[test]
     fn test_current_version_caret() {
-        let req: VersionReq = "^1.2.3".parse().unwrap();
+        let req = cargo_requirement("^1.2.3");
         assert_eq!(
-            current_version(&req),
+            req.current_version(),
             Some(Version::parse("1.2.3").unwrap())
         );
     }
 
     #[test]
     fn test_current_version_tilde() {
-        let req: VersionReq = "~0.4.0".parse().unwrap();
+        let req = cargo_requirement("~0.4.0");
         assert_eq!(
-            current_version(&req),
+            req.current_version(),
             Some(Version::parse("0.4.0").unwrap())
         );
     }
 
     #[test]
     fn test_current_version_gte() {
-        let req: VersionReq = ">=1.0.0".parse().unwrap();
+        let req = cargo_requirement(">=1.0.0");
         assert_eq!(
-            current_version(&req),
+            req.current_version(),
             Some(Version::parse("1.0.0").unwrap())
         );
     }
 
     #[test]
     fn test_build_new_req_caret() {
-        let old: VersionReq = "^1.2.3".parse().unwrap();
+        let old = cargo_requirement("^1.2.3");
         let new_ver = Version::parse("2.0.0").unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), "^2.0.0");
     }
 
     #[test]
     fn test_build_new_req_tilde() {
-        let old: VersionReq = "~1.2.3".parse().unwrap();
+        let old = cargo_requirement("~1.2.3");
         let new_ver = Version::parse("1.3.0").unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), "~1.3.0");
     }
 
     #[test]
     fn test_build_new_req_bare_major() {
-        let old: VersionReq = "1".parse().unwrap();
+        let old = cargo_requirement("1");
         let new_ver = Version::parse("2.3.4").unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), "^2");
     }
 
     #[test]
     fn test_build_new_req_bare_major_minor() {
-        let old: VersionReq = "1.2".parse().unwrap();
+        let old = cargo_requirement("1.2");
         let new_ver = Version::parse("2.3.4").unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), "^2.3");
-    }
-
-    #[test]
-    fn test_is_version_yanked_true() {
-        let versions = vec![PackageVersion {
-            version: Version::parse("1.2.3").unwrap(),
-            yanked: true,
-            features: Default::default(),
-            required_toolchain_version: None,
-        }];
-        let current = Version::parse("1.2.3").unwrap();
-        assert!(is_version_yanked(&versions, Some(&current)));
-    }
-
-    #[test]
-    fn test_is_version_yanked_false() {
-        let versions = vec![PackageVersion {
-            version: Version::parse("1.2.3").unwrap(),
-            yanked: false,
-            features: Default::default(),
-            required_toolchain_version: None,
-        }];
-        let current = Version::parse("1.2.3").unwrap();
-        assert!(!is_version_yanked(&versions, Some(&current)));
     }
 
     #[test]
@@ -358,15 +213,15 @@ mod tests {
                 required_toolchain_version: None,
             },
         ];
-        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let req = cargo_requirement("^1.0.0");
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
             ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None, None),
-            Some(Version::parse("2.0.0").unwrap())
+            strategy.select(&versions, &req, None, None),
+            Some(&Version::parse("2.0.0").unwrap())
         );
     }
 
@@ -392,15 +247,15 @@ mod tests {
                 required_toolchain_version: None,
             },
         ];
-        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let req = cargo_requirement("^1.0.0");
         let strategy = VersionStrategy {
             compatible: true,
             pre: false,
             ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None, None),
-            Some(Version::parse("1.5.0").unwrap())
+            strategy.select(&versions, &req, None, None),
+            Some(&Version::parse("1.5.0").unwrap())
         );
     }
 
@@ -420,15 +275,15 @@ mod tests {
                 required_toolchain_version: None,
             },
         ];
-        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let req = cargo_requirement("^1.0.0");
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
             ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None, None),
-            Some(Version::parse("1.0.0").unwrap())
+            strategy.select(&versions, &req, None, None),
+            Some(&Version::parse("1.0.0").unwrap())
         );
     }
 
@@ -448,15 +303,15 @@ mod tests {
                 required_toolchain_version: None,
             },
         ];
-        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let req = cargo_requirement("^1.0.0");
         let strategy = VersionStrategy {
             compatible: false,
             pre: true,
             ignore_toolchain_version: false,
         };
         assert_eq!(
-            resolve_version(&versions, &req, &strategy, None, None),
-            Some(Version::parse("2.0.0-alpha.1").unwrap())
+            strategy.select(&versions, &req, None, None),
+            Some(&Version::parse("2.0.0-alpha.1").unwrap())
         );
     }
 
@@ -482,7 +337,7 @@ mod tests {
                 required_toolchain_version: None,
             },
         ];
-        let req: VersionReq = "^1.0.0-alpha.1".parse().unwrap();
+        let req = cargo_requirement("^1.0.0-alpha.1");
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
@@ -490,14 +345,13 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_version(
+            strategy.select(
                 &versions,
                 &req,
-                &strategy,
                 Some(&Version::parse("1.0.0-alpha.1").unwrap()),
                 None,
             ),
-            Some(Version::parse("1.0.0-alpha.2").unwrap())
+            Some(&Version::parse("1.0.0-alpha.2").unwrap())
         );
     }
 
@@ -508,7 +362,7 @@ mod tests {
             package_version("2.0.0", Some("1.70.0")),
             package_version("3.0.0", Some("1.80.0")),
         ];
-        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let req = cargo_requirement("^1.0.0");
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
@@ -516,14 +370,13 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_version(
+            strategy.select(
                 &versions,
                 &req,
-                &strategy,
                 None,
                 Some(&Version::parse("1.70.0").unwrap()),
             ),
-            Some(Version::parse("2.0.0").unwrap())
+            Some(&Version::parse("2.0.0").unwrap())
         );
     }
 
@@ -534,7 +387,7 @@ mod tests {
             package_version("2.0.0", Some("1.70.0")),
             package_version("3.0.0", Some("1.80.0")),
         ];
-        let req: VersionReq = "^1.0.0".parse().unwrap();
+        let req = cargo_requirement("^1.0.0");
         let strategy = VersionStrategy {
             compatible: false,
             pre: false,
@@ -542,26 +395,25 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_version(
+            strategy.select(
                 &versions,
                 &req,
-                &strategy,
                 None,
                 Some(&Version::parse("1.70.0").unwrap()),
             ),
-            Some(Version::parse("3.0.0").unwrap())
+            Some(&Version::parse("3.0.0").unwrap())
         );
     }
 
     #[test]
     fn test_build_new_req_keeps_full_prerelease() {
-        let old: VersionReq = "^1.0.0-alpha.1".parse().unwrap();
+        let old = cargo_requirement("^1.0.0-alpha.1");
         let new_ver = Version::parse("1.0.0-beta.2").unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), "^1.0.0-beta.2");
 
-        let old: VersionReq = "=1.0.0-alpha.1".parse().unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let old = cargo_requirement("=1.0.0-alpha.1");
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), "=1.0.0-beta.2");
     }
 
@@ -577,7 +429,7 @@ mod tests {
 
     #[test]
     fn test_caret_one_req() {
-        let req: VersionReq = "^1".parse().unwrap();
+        let req = cargo_requirement("^1");
         assert_eq!(req.to_string(), "^1");
         assert!(req.matches(&Version::parse("1.3.1").unwrap()));
         assert!(!req.matches(&Version::parse("0.2.5").unwrap()));
@@ -586,19 +438,19 @@ mod tests {
     #[test]
     fn test_bare_version_req() {
         // Bare "1" gets normalized to "^1" by semver crate
-        let req: VersionReq = "1".parse().unwrap();
+        let req = cargo_requirement("1");
         assert_eq!(req.to_string(), "^1");
 
         // Bare "1.2" gets normalized to "^1.2"
-        let req: VersionReq = "1.2".parse().unwrap();
+        let req = cargo_requirement("1.2");
         assert_eq!(req.to_string(), "^1.2");
     }
 
     #[test]
     fn test_build_new_req_complex_chain_is_unchanged() {
-        let old: VersionReq = ">=1.0, <2.0".parse().unwrap();
+        let old = cargo_requirement(">=1.0, <2.0");
         let new_ver = Version::parse("3.4.5").unwrap();
-        let result = build_new_req(&old, &new_ver);
+        let result = old.with_version(&new_ver).unwrap();
         assert_eq!(result.to_string(), old.to_string());
     }
 }

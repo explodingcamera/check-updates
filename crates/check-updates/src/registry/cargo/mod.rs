@@ -4,12 +4,11 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use cargo_metadata::{CargoOpt, MetadataCommand};
-use semver::VersionReq;
 use tame_index::index::{FileLock, IndexLocation, IndexUrl, SparseIndex};
 use thiserror::Error;
 
 use crate::{
-    RegistryCachePolicy, State,
+    RegistryCachePolicy, Requirement, State,
     package::{Package, PackageVersion, Unit, Usage},
     registry::RegistryError,
 };
@@ -197,12 +196,15 @@ impl super::RegistryImpl for CargoRegistry {
 
     fn update_versions<'a>(
         &self,
-        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, VersionReq)>,
+        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, Requirement)>,
     ) -> Result<(), RegistryError> {
         // Group all edits by manifest path so we only read/write each file once.
         let mut edits: HashMap<PathBuf, Vec<ManifestEdit>> = HashMap::new();
 
         for (usage, package, new_req) in packages {
+            let new_req = new_req
+                .into_cargo()
+                .ok_or(RegistryError::WrongRequirement)?;
             // Fan out to every dep-kind section that shares the same unit + req.
             // This handles the case where a package appears under both
             // [dependencies] and [dev-dependencies] with the same version.
@@ -242,7 +244,11 @@ impl super::RegistryImpl for CargoRegistry {
                     section,
                     toml_key,
                     new_req: new_req.clone(),
-                    old_req: u.req.clone(),
+                    old_req: u
+                        .req
+                        .clone()
+                        .into_cargo()
+                        .ok_or(RegistryError::WrongRequirement)?,
                     preserve_bare: true,
                 });
             }
@@ -300,9 +306,9 @@ mod tests {
         let registry = init();
         let packages = registry.packages().await.unwrap();
 
-        // All deps in this project use `workspace = true`, so every usage
-        // should point at the workspace root Cargo.toml via Unit::Workspace.
-        for package in packages {
+        // Direct dependencies declared with `workspace = true` belong to the root.
+        // Other backends can also have their own Cargo dependencies.
+        for package in packages.into_iter().filter(|p| p.purl.name() == "clap") {
             for usage in &package.usages {
                 assert!(
                     matches!(&usage.unit, Unit::Workspace { .. }),

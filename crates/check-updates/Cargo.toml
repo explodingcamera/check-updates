@@ -2,21 +2,37 @@
 name = "check-updates"
 version.workspace = true
 edition.workspace = true
-description = "CLI for checking for updates to your Cargo dependencies"
+description = "Library for checking for updates to Cargo and npm dependencies"
 readme = "../../README.md"
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-cargo_metadata.workspace = true
-reqwest.workspace = true
-tame-index.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
 disponent.workspace = true
-http.workspace = true
 log.workspace = true
 purl.workspace = true
+reqwest.workspace = true
 semver.workspace = true
 thiserror.workspace = true
-toml_edit.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+# Cargo
+cargo_metadata = { workspace = true, optional = true }
+http = { workspace = true, optional = true }
+tame-index = { workspace = true, optional = true }
+toml_edit = { workspace = true, optional = true }
+
+# npm
+glob = { workspace = true, optional = true }
+nodejs-semver = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+serde-saphyr = { workspace = true, optional = true }
+
+[features]
+default = ["cargo", "npm"]
+cargo = ["dep:cargo_metadata", "dep:http", "dep:tame-index", "dep:toml_edit"]
+npm = ["dep:glob", "dep:nodejs-semver", "dep:serde", "dep:serde_json", "dep:serde-saphyr"]
+
+[dev-dependencies]
+tempfile.workspace = true
