@@ -1,17 +1,41 @@
-use std::collections::BTreeMap;
-
-use check_updates::{Package, Requirement, Unit, Usage};
 use console::{Key, Term, style};
 
-use crate::update::{Update, format_update_line};
+/// Display-ready updates from any backend.
+#[derive(Clone)]
+pub struct UpdateGroup {
+    pub name: String,
+    pub updates: Vec<String>,
+}
+
+pub fn display_text(text: &str) -> String {
+    let mut safe = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            safe.extend(character.escape_default());
+        } else {
+            safe.push(character);
+        }
+    }
+    safe
+}
+
+pub fn print_groups(groups: &[UpdateGroup], show_headers: bool) {
+    for (index, group) in groups.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        if show_headers {
+            println!("{}", style(&group.name).bold());
+        }
+        for update in &group.updates {
+            println!("{update}");
+        }
+    }
+}
 
 /// Interactive inline picker for dependency updates.
-pub fn prompt_updates<'a>(
-    updates: &BTreeMap<&'a Unit, Vec<Update<'a>>>,
-    compact: bool,
-    mixed: bool,
-) -> std::io::Result<Vec<(&'a Usage, &'a Package, Requirement)>> {
-    if updates.is_empty() {
+pub fn prompt_updates(groups: &[UpdateGroup], compact: bool) -> std::io::Result<Vec<usize>> {
+    if groups.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -32,24 +56,18 @@ pub fn prompt_updates<'a>(
         ));
     }
 
-    InlineSelect::new(&term, updates, compact, mixed)?.run()
+    InlineSelect::new(&term, groups, compact)?.run()
 }
 
-enum LineKind<'a> {
+enum LineKind {
     Group(String),
     Separator,
-    Update {
-        cursor_idx: usize,
-        label: String,
-        usage: &'a Usage,
-        package: &'a Package,
-        new_req: Requirement,
-    },
+    Update { cursor_idx: usize, label: String },
 }
 
-struct InlineSelect<'a, 't> {
+struct InlineSelect<'t> {
     term: &'t Term,
-    lines: Vec<LineKind<'a>>,
+    lines: Vec<LineKind>,
     selected: Vec<bool>,
     update_line_for_cursor: Vec<usize>,
     group_line_for_cursor: Vec<usize>,
@@ -61,49 +79,28 @@ struct InlineSelect<'a, 't> {
     colors: bool,
 }
 
-impl<'a, 't> InlineSelect<'a, 't> {
-    fn new(
-        term: &'t Term,
-        updates: &BTreeMap<&'a Unit, Vec<Update<'a>>>,
-        compact: bool,
-        mixed: bool,
-    ) -> std::io::Result<Self> {
-        let (name_w, cur_w, new_w) = global_column_widths(updates, term);
-
+impl<'t> InlineSelect<'t> {
+    fn new(term: &'t Term, groups: &[UpdateGroup], compact: bool) -> std::io::Result<Self> {
         let mut lines = Vec::new();
         let mut selected = Vec::new();
         let mut update_line_for_cursor = Vec::new();
         let mut group_line_for_cursor = Vec::new();
         let mut cursor_idx = 0usize;
 
-        for (unit_idx, (unit, unit_updates)) in updates.iter().enumerate() {
-            if !compact && unit_idx > 0 {
+        for (group_idx, group) in groups.iter().enumerate() {
+            if !compact && group_idx > 0 {
                 lines.push(LineKind::Separator);
             }
             let group_line_idx = lines.len();
-            let group_name = if mixed {
-                match unit {
-                    Unit::Workspace { .. } => format!(
-                        "{} (cargo workspace)",
-                        unit.name().trim_end_matches(" (workspace)")
-                    ),
-                    _ => format!("{} (cargo)", unit.name()),
-                }
-            } else {
-                unit.name().to_string()
-            };
-            lines.push(LineKind::Group(group_name));
+            lines.push(LineKind::Group(group.name.clone()));
 
-            for update in unit_updates {
+            for label in &group.updates {
                 update_line_for_cursor.push(lines.len());
                 group_line_for_cursor.push(group_line_idx);
                 selected.push(true);
                 lines.push(LineKind::Update {
                     cursor_idx,
-                    label: format_update_line(update, name_w, cur_w, new_w),
-                    usage: update.usage,
-                    package: update.package,
-                    new_req: update.new_req.clone(),
+                    label: label.clone(),
                 });
                 cursor_idx += 1;
             }
@@ -131,7 +128,7 @@ impl<'a, 't> InlineSelect<'a, 't> {
         Ok(select)
     }
 
-    fn run(mut self) -> std::io::Result<Vec<(&'a Usage, &'a Package, Requirement)>> {
+    fn run(mut self) -> std::io::Result<Vec<usize>> {
         loop {
             let key = match self.term.read_key() {
                 Ok(key) => key,
@@ -244,19 +241,11 @@ impl<'a, 't> InlineSelect<'a, 't> {
         self.group_line_for_cursor[self.cursor] < start
     }
 
-    fn collect_selected(self) -> Vec<(&'a Usage, &'a Package, Requirement)> {
-        self.lines
-            .into_iter()
-            .filter_map(|line| match line {
-                LineKind::Update {
-                    cursor_idx,
-                    usage,
-                    package,
-                    new_req,
-                    ..
-                } if self.selected[cursor_idx] => Some((usage, package, new_req)),
-                _ => None,
-            })
+    fn collect_selected(self) -> Vec<usize> {
+        self.selected
+            .iter()
+            .enumerate()
+            .filter_map(|(index, selected)| selected.then_some(index))
             .collect()
     }
 
@@ -403,27 +392,4 @@ impl<'a, 't> InlineSelect<'a, 't> {
             .move_cursor_up(self.total_lines().saturating_sub(1))?;
         self.term.clear_to_end_of_screen()
     }
-}
-
-fn global_column_widths(
-    updates: &BTreeMap<&Unit, Vec<Update<'_>>>,
-    term: &Term,
-) -> (usize, usize, usize) {
-    let (name_w, cur_w, new_w) =
-        updates
-            .values()
-            .flatten()
-            .fold((0, 0, 0), |(name_w, cur_w, new_w), u| {
-                let cur_len = u.current_req.to_string().len() + if u.yanked { 9 } else { 0 };
-                (
-                    name_w.max(u.name.len()),
-                    cur_w.max(cur_len),
-                    new_w.max(u.new_req.to_string().len()),
-                )
-            });
-
-    let target = (term.size().1 as usize).min(40);
-    let name_w = name_w.max(target.saturating_sub(cur_w + new_w + 4));
-
-    (name_w, cur_w, new_w)
 }

@@ -205,7 +205,7 @@ impl fmt::Display for Requirement {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "npm"))]
 mod tests {
     use super::*;
 

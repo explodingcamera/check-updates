@@ -5,6 +5,7 @@ use std::path::Path;
 use check_updates::{Package, Packages, Requirement, Unit, Usage, VersionStrategy};
 use console::Style;
 
+use crate::interactive::{UpdateGroup, display_text};
 use crate::version::{VersionBump, colorize_req, version_bump};
 
 pub struct Update<'a> {
@@ -19,8 +20,17 @@ pub struct Update<'a> {
 
 fn display_name(update: &Update<'_>) -> String {
     match update.usage.rename.as_deref() {
-        Some(alias) if alias != update.name => format!("{} ({alias})", update.name),
-        _ => update.name.to_string(),
+        Some(alias) if alias != update.name => format!("{} ({alias})", display_text(update.name)),
+        _ => display_text(update.name),
+    }
+}
+
+fn display_requirement(update: &Update<'_>, requirement: &Requirement) -> String {
+    let text = requirement.to_string();
+    if update.package.purl.package_type() == "npm" {
+        display_text(&text)
+    } else {
+        text
     }
 }
 
@@ -147,14 +157,16 @@ pub fn format_update_line(
         .package
         .repository
         .as_ref()
-        .map(|url| hyperlink(&normalize_repo_url(url), &plain_display_name))
+        .map(|url| normalize_repo_url(url))
+        .filter(|url| !url.chars().any(char::is_control))
+        .map(|url| hyperlink(&url, &plain_display_name))
         .unwrap_or_else(|| plain_display_name.clone());
 
     // Pad manually since hyperlink escape codes don't count as visible width
     let padding = name_width.saturating_sub(plain_display_name.len());
     let _ = write!(f, " {}{:>padding$}", name_display, "");
 
-    let cur_req_str = update.current_req.to_string();
+    let cur_req_str = display_requirement(update, update.current_req);
     let cur_display_len = cur_req_str.len() + if update.yanked { 9 } else { 0 };
     let cur_padding = cur_width.saturating_sub(cur_display_len);
 
@@ -177,7 +189,7 @@ pub fn format_update_line(
 
     let _ = write!(f, "  →  ");
 
-    let new_req_str = update.new_req.to_string();
+    let new_req_str = display_requirement(update, &update.new_req);
     let colorized = colorize_req(&cur_req_str, &new_req_str, update.bump);
 
     let new_padding = new_width.saturating_sub(new_req_str.len());
@@ -186,61 +198,90 @@ pub fn format_update_line(
     line
 }
 
-/// Print the update table, grouped by unit.
-// TODO: maybe print this as a table / add a json output option
-pub fn print_summary(updates: &BTreeMap<&Unit, Vec<Update<'_>>>, show_unit: bool) {
-    if updates.is_empty() {
-        if !show_unit {
-            println!("No packages need version requirement updates.");
-        }
-        return;
-    }
+pub fn summary_groups(updates: &BTreeMap<&Unit, Vec<Update<'_>>>, mixed: bool) -> Vec<UpdateGroup> {
+    updates
+        .iter()
+        .map(|(unit, unit_updates)| {
+            let name_w = unit_updates
+                .iter()
+                .map(|u| display_name(u).len())
+                .max()
+                .unwrap_or(0);
+            let cur_w = unit_updates
+                .iter()
+                .map(|u| display_requirement(u, u.current_req).len() + if u.yanked { 9 } else { 0 })
+                .max()
+                .unwrap_or(0);
+            let new_w = unit_updates
+                .iter()
+                .map(|u| display_requirement(u, &u.new_req).len())
+                .max()
+                .unwrap_or(0);
 
-    let multi_unit = show_unit || updates.len() > 1;
-    let mut first = true;
-
-    for (unit, unit_updates) in updates {
-        if multi_unit {
-            if !first {
-                println!();
+            UpdateGroup {
+                name: group_name(unit, mixed),
+                updates: unit_updates
+                    .iter()
+                    .map(|update| format_update_line(update, name_w, cur_w, new_w))
+                    .collect(),
             }
-            let name = if show_unit {
-                match unit {
-                    Unit::Workspace { .. } => format!(
-                        "{} (cargo workspace)",
-                        unit.name().trim_end_matches(" (workspace)")
-                    ),
-                    _ => format!("{} (cargo)", unit.name()),
-                }
-            } else {
-                unit.name().to_string()
-            };
-            println!("{}", Style::new().bold().apply_to(name));
-        } else if !first {
-            println!();
-        }
-        first = false;
+        })
+        .collect()
+}
 
-        let name_w = unit_updates
-            .iter()
-            .map(|u| display_name(u).len())
-            .max()
-            .unwrap_or(0);
-        let cur_w = unit_updates
-            .iter()
-            .map(|u| u.current_req.to_string().len() + if u.yanked { 9 } else { 0 })
-            .max()
-            .unwrap_or(0);
-        let new_w = unit_updates
-            .iter()
-            .map(|u| u.new_req.to_string().len())
-            .max()
-            .unwrap_or(0);
-
-        for update in unit_updates {
-            println!("{}", format_update_line(update, name_w, cur_w, new_w));
-        }
+fn group_name(unit: &Unit, mixed: bool) -> String {
+    if unit
+        .path()
+        .is_some_and(|path| path.file_name().is_some_and(|name| name == "package.json"))
+    {
+        return format!(
+            "{}{}",
+            display_text(&unit.name()),
+            if mixed { " (npm)" } else { "" }
+        );
     }
+    if mixed {
+        match unit {
+            Unit::Workspace { .. } => format!(
+                "{} (cargo workspace)",
+                unit.name().trim_end_matches(" (workspace)")
+            ),
+            _ => format!("{} (cargo)", unit.name()),
+        }
+    } else {
+        unit.name().to_string()
+    }
+}
+
+pub fn selection_groups(
+    updates: &BTreeMap<&Unit, Vec<Update<'_>>>,
+    mixed: bool,
+) -> Vec<UpdateGroup> {
+    let (name_w, cur_w, new_w) = updates.values().flatten().fold((0, 0, 0), |widths, u| {
+        (
+            widths.0.max(if u.package.purl.package_type() == "npm" {
+                display_name(u).len()
+            } else {
+                u.name.len()
+            }),
+            widths
+                .1
+                .max(display_requirement(u, u.current_req).len() + if u.yanked { 9 } else { 0 }),
+            widths.2.max(display_requirement(u, &u.new_req).len()),
+        )
+    });
+    let target = (console::Term::stderr().size().1 as usize).min(40);
+    let name_w = name_w.max(target.saturating_sub(cur_w + new_w + 4));
+    updates
+        .iter()
+        .map(|(unit, entries)| UpdateGroup {
+            name: group_name(unit, mixed),
+            updates: entries
+                .iter()
+                .map(|u| format_update_line(u, name_w, cur_w, new_w))
+                .collect(),
+        })
+        .collect()
 }
 
 fn hyperlink(url: &str, text: &str) -> String {

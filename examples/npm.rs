@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use check_updates::VersionStrategy;
 use check_updates::npm::{self, NpmOptions};
 
 #[tokio::main]
@@ -9,12 +10,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("examples/npm/workspace-demo"));
 
-    let packages = npm::updates(&root, &NpmOptions::default()).await?;
-    for update in packages.updates {
-        println!(
-            "{}: {} ({}) {} -> {}",
-            update.project, update.name, update.section, update.current, update.proposed
-        );
+    let found = npm::packages(&root, &NpmOptions::default()).await?;
+    for (unit, dependencies) in found.packages {
+        for (requirement, _, package) in dependencies {
+            if let Some(latest) = package.latest(&requirement, &VersionStrategy::stable(), None)
+                && let Some(proposed) = requirement.with_version(latest)
+                && proposed != requirement
+            {
+                println!(
+                    "{}: {} {} -> {}",
+                    unit.name(),
+                    package.purl.name(),
+                    requirement,
+                    proposed
+                );
+            }
+        }
     }
     Ok(())
 }

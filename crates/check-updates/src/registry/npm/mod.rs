@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::{Requirement, Version, VersionStrategy};
+use crate::{DepKind, Package, PackageVersion, Packages, Purl, Requirement, Unit, Usage, Version};
 
 mod manifest;
 
@@ -55,31 +55,17 @@ pub fn package_manager(root: &Path) -> Result<PackageManager, String> {
     }
 }
 
-/// An npm dependency update in a project manifest.
-#[derive(Debug, Clone)]
-pub struct NpmUpdate {
-    pub manifest: PathBuf,
-    pub project: String,
-    pub name: String,
-    pub section: &'static str,
-    pub current: String,
-    pub proposed: String,
-}
-
-/// Options for querying npm updates.
+/// Options for discovering npm packages.
 #[derive(Debug, Default)]
 pub struct NpmOptions<'a> {
     pub packages: &'a [String],
-    pub strategy: VersionStrategy,
-    #[cfg(test)]
-    registry_url: Option<String>,
 }
 
-/// Discovered npm projects and their available updates.
+/// Discovered npm projects and their package versions.
 #[derive(Debug)]
 pub struct NpmPackages {
     pub projects: Vec<String>,
-    pub updates: Vec<NpmUpdate>,
+    pub packages: Packages,
 }
 
 struct Dependency {
@@ -95,8 +81,8 @@ struct Project {
     dependencies: Vec<Dependency>,
 }
 
-/// Resolve direct npm dependency updates without modifying project files.
-pub async fn updates(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackages, String> {
+/// Discover direct npm dependencies and their published versions without modifying project files.
+pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackages, String> {
     let root_manifest = PackageJson::from_path(&root.join("package.json"))?;
     let workspace = PnpmWorkspace::from_root(root)?;
     let mut paths = BTreeSet::from([root.join("package.json")]);
@@ -204,11 +190,6 @@ pub async fn updates(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackage
         .map_err(|error| error.to_string())?;
     let registry =
         reqwest::Url::parse("https://registry.npmjs.org/").expect("valid public npm registry URL");
-    #[cfg(test)]
-    let registry = match options.registry_url.as_deref() {
-        Some(url) => reqwest::Url::parse(url).map_err(|error| error.to_string())?,
-        None => registry,
-    };
     let mut versions = BTreeMap::new();
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
     let mut tasks = tokio::task::JoinSet::new();
@@ -280,7 +261,7 @@ pub async fn updates(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackage
         .iter()
         .map(|project| project.name.clone())
         .collect();
-    let mut updates = Vec::new();
+    let mut packages = Packages::new();
     for project in projects {
         for dependency in project.dependencies {
             let Ok(requirement) = Requirement::from_node(&dependency.declared) else {
@@ -292,45 +273,81 @@ pub async fn updates(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackage
             let Some(available) = versions.get(&dependency.name) else {
                 continue;
             };
-            let latest = available
-                .iter()
-                .filter(|version| options.strategy.allows_prerelease(version, Some(&current)))
-                .filter(|version| !options.strategy.compatible || requirement.matches(version))
-                .max();
-            if let Some(latest) = latest
-                && latest > &current
-                && let Some(new_requirement) = requirement.with_version(latest)
-            {
-                let new_spec = new_requirement.to_string();
-                if new_spec == dependency.declared {
-                    continue;
-                }
-                updates.push(NpmUpdate {
-                    manifest: project.manifest.clone(),
-                    project: project.name.clone(),
-                    name: dependency.alias,
-                    section: dependency.section,
-                    current: dependency.declared,
-                    proposed: new_spec,
-                });
-            }
+            let kind = match dependency.section {
+                "dependencies" => DepKind::Normal,
+                "devDependencies" => DepKind::Dev,
+                "optionalDependencies" => DepKind::Optional,
+                "peerDependencies" => DepKind::Peer,
+                _ => unreachable!("known dependency section"),
+            };
+            let unit = Unit::Project {
+                manifest: project.manifest.clone(),
+                name: project.name.clone(),
+            };
+            let usage = Usage {
+                unit: unit.clone(),
+                req: requirement.clone(),
+                kind,
+                rename: None,
+                supported_toolchain_version: None,
+            };
+            let package = Package {
+                purl: Purl::new("npm".to_string(), dependency.alias.clone())
+                    .map_err(|error| error.to_string())?,
+                usages: vec![usage],
+                versions: available
+                    .iter()
+                    .filter(|version| *version > &current)
+                    .cloned()
+                    .map(|version| PackageVersion {
+                        version,
+                        yanked: false,
+                        features: Default::default(),
+                        required_toolchain_version: None,
+                    })
+                    .collect(),
+                repository: None,
+                homepage: None,
+            };
+            packages
+                .entry(unit)
+                .or_default()
+                .push((requirement.clone(), kind, package));
         }
     }
     Ok(NpmPackages {
         projects: project_names,
-        updates,
+        packages,
     })
 }
 
-/// Apply selected npm manifest updates, preserving the file's formatting.
-pub fn update_versions(updates: &[NpmUpdate]) -> Result<(), String> {
+/// Apply selected npm requirements from the shared package model.
+pub fn update_packages<'a>(
+    selected: impl IntoIterator<Item = (&'a Usage, &'a Package, Requirement)>,
+) -> Result<(), String> {
     let mut by_manifest: BTreeMap<&Path, Vec<(&str, String, String, String)>> = BTreeMap::new();
-    for update in updates {
-        by_manifest.entry(&update.manifest).or_default().push((
-            update.section,
-            update.name.clone(),
-            update.current.clone(),
-            update.proposed.clone(),
+    for (usage, package, proposed) in selected {
+        if !matches!(usage.req, Requirement::Npm { .. })
+            || !matches!(proposed, Requirement::Npm { .. })
+            || package.purl.package_type() != "npm"
+        {
+            return Err("expected an npm dependency update".into());
+        }
+        let Unit::Project { manifest, .. } = &usage.unit else {
+            return Err("expected an npm project manifest".into());
+        };
+        let section = match usage.kind {
+            DepKind::Normal => "dependencies",
+            DepKind::Dev => "devDependencies",
+            DepKind::Optional => "optionalDependencies",
+            DepKind::Peer => "peerDependencies",
+            DepKind::Build => return Err("unsupported npm dependency section".into()),
+        };
+        by_manifest.entry(manifest).or_default().push((
+            section,
+            package.purl.name().to_string(),
+            usage.req.to_string(),
+            proposed.to_string(),
         ));
     }
     for (path, edits) in by_manifest {
@@ -393,9 +410,6 @@ fn edit_manifest(path: &Path, edits: &[(&str, String, String, String)]) -> Resul
 mod tests {
     use super::*;
 
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
     #[test]
     fn edits_only_requested_section() {
         let dir = tempfile::tempdir().unwrap();
@@ -423,6 +437,40 @@ mod tests {
     }
 
     #[test]
+    fn applies_selected_package_requirement() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("package.json");
+        std::fs::write(
+            &manifest,
+            r#"{"dependencies":{"foo":"^1.0.0"},"devDependencies":{"foo":"^1.0.0"}}"#,
+        )
+        .unwrap();
+        let req = Requirement::from_node("^1.0.0").unwrap();
+        let unit = Unit::Project {
+            manifest: manifest.clone(),
+            name: "app".into(),
+        };
+        let usage = Usage {
+            unit,
+            req,
+            kind: DepKind::Dev,
+            rename: None,
+            supported_toolchain_version: None,
+        };
+        let package = Package {
+            purl: Purl::new("npm".to_string(), "foo").unwrap(),
+            usages: vec![usage.clone()],
+            versions: Vec::new(),
+            repository: None,
+            homepage: None,
+        };
+        update_packages([(&usage, &package, Requirement::from_node("^2.0.0").unwrap())]).unwrap();
+        let contents = std::fs::read_to_string(manifest).unwrap();
+        assert!(contents.contains(r#""dependencies":{"foo":"^1.0.0"}"#));
+        assert!(contents.contains(r#""devDependencies":{"foo":"^2.0.0"}"#));
+    }
+
+    #[test]
     fn refuses_to_edit_a_nested_section_instead() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("package.json");
@@ -445,48 +493,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovers_workspace_and_deduplicates_requests() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let root = dir.path();
-        let workspace = root.join("packages/app");
-        std::fs::create_dir_all(&workspace).unwrap();
-        std::fs::write(
-            root.join("package.json"),
-            r#"{"name":"root","workspaces":["packages/*"],"dependencies":{"foo":"^1.0.0"}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            workspace.join("package.json"),
-            r#"{"name":"app","devDependencies":{"foo":"~1.0.0","local":"workspace:*"}}"#,
-        )
-        .unwrap();
-        let registry = format!("http://{}/", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0; 4096];
-            let read = stream.read(&mut buf).unwrap();
-            assert!(String::from_utf8_lossy(&buf[..read]).contains("GET /foo "));
-            let body = r#"{"versions":{"1.0.0":{},"2.0.0":{},"3.0.0":{"deprecated":"bad"}}}"#;
-            write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
-        });
-        let found = updates(
-            root,
-            &NpmOptions {
-                registry_url: Some(registry),
-                ..NpmOptions::default()
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(found.projects, ["root", "app"]);
-        assert_eq!(found.updates.len(), 2);
-        assert_eq!(found.updates[0].proposed, "^2.0.0");
-        assert_eq!(found.updates[1].proposed, "~2.0.0");
-        server.join().unwrap();
-    }
-
-    #[tokio::test]
     async fn discovers_bun_workspace_from_package_json() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
@@ -497,42 +503,12 @@ mod tests {
             r#"{"name":"root","packageManager":"bun@1.2.0","workspaces":{"packages":["apps/*"]}}"#,
         )
         .unwrap();
-        std::fs::write(
-            app.join("package.json"),
-            r#"{"name":"app","dependencies":{"foo":"^1.0.0"}}"#,
-        )
-        .unwrap();
+        std::fs::write(app.join("package.json"), r#"{"name":"app"}"#).unwrap();
         std::fs::write(root.join("bun.lock"), "").unwrap();
         assert_eq!(package_manager(root).unwrap(), PackageManager::Bun);
 
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let registry = format!("http://{}/", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0; 4096];
-            let read = stream.read(&mut request).unwrap();
-            assert!(String::from_utf8_lossy(&request[..read]).contains("GET /foo "));
-            let body = r#"{"versions":{"1.0.0":{},"2.0.0":{}}}"#;
-            write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
-        });
-        let found = updates(
-            root,
-            &NpmOptions {
-                registry_url: Some(registry),
-                ..NpmOptions::default()
-            },
-        )
-        .await
-        .unwrap();
+        let found = packages(root, &NpmOptions::default()).await.unwrap();
         assert_eq!(found.projects, ["root", "app"]);
-        assert_eq!(found.updates.len(), 1);
-        update_versions(&found.updates).unwrap();
-        assert!(
-            std::fs::read_to_string(app.join("package.json"))
-                .unwrap()
-                .contains("\"foo\":\"^2.0.0\"")
-        );
-        server.join().unwrap();
     }
 
     #[test]
@@ -564,7 +540,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(app.join("package.json"), r#"{"name":"app"}"#).unwrap();
-        let found = updates(root, &NpmOptions::default()).await.unwrap();
+        let found = packages(root, &NpmOptions::default()).await.unwrap();
         assert_eq!(found.projects, ["root", "app"]);
     }
 
@@ -595,7 +571,7 @@ mod tests {
         .unwrap();
         std::os::unix::fs::symlink(external.path(), root.join("apps/external")).unwrap();
 
-        let found = updates(root, &NpmOptions::default()).await.unwrap();
+        let found = packages(root, &NpmOptions::default()).await.unwrap();
         assert_eq!(found.projects, ["root", "app"]);
     }
 }

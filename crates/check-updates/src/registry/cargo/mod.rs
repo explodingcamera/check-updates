@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::{
     RegistryCachePolicy, Requirement, State,
-    package::{Package, PackageVersion, Unit, Usage},
+    package::{DepKind, Package, PackageVersion, Unit, Usage},
     registry::RegistryError,
 };
 
@@ -237,7 +237,15 @@ impl super::RegistryImpl for CargoRegistry {
                     Unit::Workspace { .. } => {
                         vec!["workspace".to_string(), "dependencies".to_string()]
                     }
-                    _ => vec![u.kind.to_string()],
+                    _ => {
+                        let section = match u.kind {
+                            DepKind::Normal => "dependencies",
+                            DepKind::Dev => "dev-dependencies",
+                            DepKind::Build => "build-dependencies",
+                            DepKind::Optional | DepKind::Peer => continue,
+                        };
+                        vec![section.to_string()]
+                    }
                 };
 
                 edits.entry(manifest).or_default().push(ManifestEdit {

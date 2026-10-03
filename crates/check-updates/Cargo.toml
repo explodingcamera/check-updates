@@ -29,10 +29,10 @@ serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 serde-saphyr = { workspace = true, optional = true }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 default = ["cargo", "npm"]
 cargo = ["dep:cargo_metadata", "dep:http", "dep:tame-index", "dep:toml_edit"]
 npm = ["dep:glob", "dep:nodejs-semver", "dep:serde", "dep:serde_json", "dep:serde-saphyr"]
-
-[dev-dependencies]
-tempfile.workspace = true

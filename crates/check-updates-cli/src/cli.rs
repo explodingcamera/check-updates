@@ -82,6 +82,16 @@ pub struct Args {
     pub cmd: Option<Command>,
 }
 
+impl Args {
+    pub fn version_strategy(&self) -> check_updates::VersionStrategy {
+        check_updates::VersionStrategy {
+            compatible: self.compatible,
+            pre: self.pre,
+            ignore_toolchain_version: self.ignore_toolchain_version,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum RegistryCacheMode {
     PreferLocal,

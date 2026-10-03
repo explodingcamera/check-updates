@@ -77,14 +77,18 @@ pub enum DepKind {
     Normal,
     Dev,
     Build,
+    Optional,
+    Peer,
 }
 
 impl fmt::Display for DepKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DepKind::Normal => write!(f, "dependencies"),
-            DepKind::Dev => write!(f, "dev-dependencies"),
-            DepKind::Build => write!(f, "build-dependencies"),
+            DepKind::Normal => write!(f, "normal"),
+            DepKind::Dev => write!(f, "dev"),
+            DepKind::Build => write!(f, "build"),
+            DepKind::Optional => write!(f, "optional"),
+            DepKind::Peer => write!(f, "peer"),
         }
     }
 }
