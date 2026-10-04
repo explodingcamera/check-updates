@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "check-updates"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cargo_metadata",
  "disponent",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "check-updates-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "check-updates",
  "clap",
@@ -430,9 +430,9 @@ dependencies = [
 
 [[package]]
 name = "disponent"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82805de2d19fe821d3b7fb96a120ad0f2048c38e3a412ba44cda7c0932a13db9"
+checksum = "06f7510dae9d9b4bd3b07602cfa9ac2281357b2228f36ff2fb353d7d5788905b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1054,9 +1054,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mio"
-version = "1.2.3"
+version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b18443e9c262bfe8fa82f51666e2642c53393f7e5c27b3e1aeab922cff5b9d8"
+checksum = "1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee"
 dependencies = [
  "libc",
  "wasi",

@@ -10,14 +10,14 @@ members = ["crates/*"]
 default-members = ["crates/check-updates-cli"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.98"
 repository = "https://github.com/explodingcamera/check-updates"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-check-updates = { path = "crates/check-updates", version = "0.4" }
+check-updates = { path = "crates/check-updates", version = "0.5" }
 glob = "0.3"
 nodejs-semver = "7.0"
 serde = { version = "1.0", features = ["derive"] }

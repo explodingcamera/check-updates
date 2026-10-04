@@ -6,6 +6,8 @@ description = "CLI for checking for updates to Cargo and JavaScript dependencies
 readme = "../../README.md"
 repository.workspace = true
 license.workspace = true
+keywords = ["cargo", "cli", "dependencies", "npm", "updates"]
+categories = ["command-line-utilities"]
 default-run = "check-updates"
 
 [package.metadata.binstall]

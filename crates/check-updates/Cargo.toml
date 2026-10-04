@@ -6,6 +6,8 @@ description = "Library for checking for updates to Cargo and npm dependencies"
 readme = "../../README.md"
 repository.workspace = true
 license.workspace = true
+keywords = ["cargo", "dependencies", "npm", "updates"]
+categories = ["development-tools"]
 
 [dependencies]
 disponent.workspace = true
