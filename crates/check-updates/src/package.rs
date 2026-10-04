@@ -11,7 +11,7 @@ use crate::{Purl, Requirement, Version};
 pub enum Unit {
     /// A single project manifest (e.g. `crates/foo/Cargo.toml` `[dependencies]`)
     Project { manifest: PathBuf, name: String },
-    /// The workspace root manifest (e.g. `Cargo.toml` `[workspace.dependencies]`)
+    /// A workspace root manifest (e.g. Cargo `[workspace.dependencies]` or root `package.json` dependencies)
     Workspace { manifest: PathBuf },
     /// A globally installed package
     Global,

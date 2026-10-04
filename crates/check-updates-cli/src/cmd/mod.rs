@@ -58,7 +58,7 @@ pub async fn run(
         .unwrap_or_default();
     let npm_updates = npm
         .as_ref()
-        .map(|project| update::resolve_updates(&project.packages, &strategy, &args.package))
+        .map(|project| update::resolve_updates(&project.packages, &strategy, &[]))
         .unwrap_or_default();
 
     let mixed = has_cargo && has_npm;

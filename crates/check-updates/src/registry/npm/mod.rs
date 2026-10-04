@@ -85,6 +85,7 @@ struct Project {
 pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackages, String> {
     let root_manifest = PackageJson::from_path(&root.join("package.json"))?;
     let workspace = PnpmWorkspace::from_root(root)?;
+    let has_workspace = root_manifest.workspaces.is_some() || !workspace.packages.is_empty();
     let mut paths = BTreeSet::from([root.join("package.json")]);
     let mut excluded = BTreeSet::new();
     let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
@@ -280,9 +281,15 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                 "peerDependencies" => DepKind::Peer,
                 _ => unreachable!("known dependency section"),
             };
-            let unit = Unit::Project {
-                manifest: project.manifest.clone(),
-                name: project.name.clone(),
+            let unit = if has_workspace && project.manifest == root.join("package.json") {
+                Unit::Workspace {
+                    manifest: project.manifest.clone(),
+                }
+            } else {
+                Unit::Project {
+                    manifest: project.manifest.clone(),
+                    name: project.name.clone(),
+                }
             };
             let usage = Usage {
                 unit: unit.clone(),
@@ -333,8 +340,9 @@ pub fn update_packages<'a>(
         {
             return Err("expected an npm dependency update".into());
         }
-        let Unit::Project { manifest, .. } = &usage.unit else {
-            return Err("expected an npm project manifest".into());
+        let manifest = match &usage.unit {
+            Unit::Project { manifest, .. } | Unit::Workspace { manifest } => manifest,
+            Unit::Global => return Err("expected an npm project manifest".into()),
         };
         let section = match usage.kind {
             DepKind::Normal => "dependencies",
@@ -468,6 +476,50 @@ mod tests {
         let contents = std::fs::read_to_string(manifest).unwrap();
         assert!(contents.contains(r#""dependencies":{"foo":"^1.0.0"}"#));
         assert!(contents.contains(r#""devDependencies":{"foo":"^2.0.0"}"#));
+    }
+
+    #[test]
+    fn updates_workspace_root_and_member_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("package.json");
+        let member = dir.path().join("packages/app/package.json");
+        std::fs::create_dir_all(member.parent().unwrap()).unwrap();
+        for manifest in [&root, &member] {
+            std::fs::write(manifest, r#"{"dependencies":{"foo":"^1.0.0"}}"#).unwrap();
+        }
+        let requirement = Requirement::from_node("^1.0.0").unwrap();
+        let root_usage = Usage {
+            unit: Unit::Workspace {
+                manifest: root.clone(),
+            },
+            req: requirement.clone(),
+            kind: DepKind::Normal,
+            rename: None,
+            supported_toolchain_version: None,
+        };
+        let member_usage = Usage {
+            unit: Unit::Project {
+                manifest: member.clone(),
+                name: "app".into(),
+            },
+            ..root_usage.clone()
+        };
+        let package = Package {
+            purl: Purl::new("npm".to_string(), "foo").unwrap(),
+            usages: Vec::new(),
+            versions: Vec::new(),
+            repository: None,
+            homepage: None,
+        };
+        assert!(root_usage.unit < member_usage.unit);
+        update_packages([(
+            &member_usage,
+            &package,
+            Requirement::from_node("^2.0.0").unwrap(),
+        )])
+        .unwrap();
+        assert!(std::fs::read_to_string(&root).unwrap().contains("^1.0.0"));
+        assert!(std::fs::read_to_string(&member).unwrap().contains("^2.0.0"));
     }
 
     #[test]

@@ -234,11 +234,17 @@ fn group_name(unit: &Unit, mixed: bool) -> String {
         .path()
         .is_some_and(|path| path.file_name().is_some_and(|name| name == "package.json"))
     {
-        return format!(
-            "{}{}",
-            display_text(&unit.name()),
-            if mixed { " (npm)" } else { "" }
-        );
+        let name = display_text(&unit.name());
+        return if mixed {
+            match unit {
+                Unit::Workspace { .. } => {
+                    format!("{} (npm workspace)", name.trim_end_matches(" (workspace)"))
+                }
+                _ => format!("{name} (npm)"),
+            }
+        } else {
+            name
+        };
     }
     if mixed {
         match unit {
