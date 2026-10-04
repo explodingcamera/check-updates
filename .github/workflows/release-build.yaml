@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   create-release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
@@ -36,7 +36,7 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-26.04
             archive: check-updates-amd64-linux
             archive-format: tar.xz
           - target: x86_64-pc-windows-gnu
@@ -44,11 +44,11 @@ jobs:
             archive: check-updates-amd64-windows
             archive-format: zip
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: ubuntu-26.04-arm
             archive: check-updates-arm64-linux
             archive-format: tar.xz
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-26
             archive: check-updates-arm64-darwin
             archive-format: tar.xz
     runs-on: ${{ matrix.os }}
