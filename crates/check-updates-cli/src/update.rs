@@ -38,6 +38,7 @@ pub fn resolve_updates<'a>(
     packages: &'a Packages,
     strategy: &VersionStrategy,
     filter: &[String],
+    include_breaking: bool,
 ) -> BTreeMap<&'a Unit, Vec<Update<'a>>> {
     let mut result: BTreeMap<&Unit, Vec<Update>> = BTreeMap::new();
 
@@ -63,7 +64,22 @@ pub fn resolve_updates<'a>(
                 .filter(|u| u.unit == *unit && u.req == *req)
                 .filter_map(|u| u.supported_toolchain_version.clone())
                 .min();
-            let latest = package.latest(req, strategy, supported_toolchain_version.as_ref());
+            let latest_for = |strategy: &VersionStrategy, supported| {
+                strategy.select(
+                    package.versions.iter().filter(|candidate| {
+                        include_breaking
+                            || current.as_ref().is_some_and(|current| {
+                                candidate.version >= *current
+                                    && version_bump(current, &candidate.version)
+                                        != VersionBump::Major
+                            })
+                    }),
+                    req,
+                    current.as_ref(),
+                    supported,
+                )
+            };
+            let latest = latest_for(strategy, supported_toolchain_version.as_ref());
 
             if let Some(supported_toolchain_version) = supported_toolchain_version.as_ref()
                 && !strategy.ignore_toolchain_version
@@ -73,7 +89,7 @@ pub fn resolve_updates<'a>(
                     pre: strategy.pre,
                     ignore_toolchain_version: true,
                 };
-                let unrestricted = package.latest(req, &ignored_strategy, None);
+                let unrestricted = latest_for(&ignored_strategy, None);
 
                 if unrestricted > latest {
                     log::info!(
@@ -262,7 +278,7 @@ fn group_name(unit: &Unit, mixed: bool) -> String {
 pub fn selection_groups(
     updates: &BTreeMap<&Unit, Vec<Update<'_>>>,
     mixed: bool,
-) -> Vec<UpdateGroup> {
+) -> (Vec<UpdateGroup>, Vec<bool>) {
     let (name_w, cur_w, new_w) = updates.values().flatten().fold((0, 0, 0), |widths, u| {
         (
             widths.0.max(if u.package.purl.package_type() == "npm" {
@@ -278,7 +294,12 @@ pub fn selection_groups(
     });
     let target = (console::Term::stderr().size().1 as usize).min(40);
     let name_w = name_w.max(target.saturating_sub(cur_w + new_w + 4));
-    updates
+    let default_selected = updates
+        .values()
+        .flatten()
+        .map(|update| update.bump != VersionBump::Major)
+        .collect();
+    let groups = updates
         .iter()
         .map(|(unit, entries)| UpdateGroup {
             name: group_name(unit, mixed),
@@ -287,7 +308,8 @@ pub fn selection_groups(
                 .map(|u| format_update_line(u, name_w, cur_w, new_w))
                 .collect(),
         })
-        .collect()
+        .collect();
+    (groups, default_selected)
 }
 
 fn hyperlink(url: &str, text: &str) -> String {
@@ -324,6 +346,111 @@ fn normalize_repo_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use check_updates::{DepKind, PackageVersion, Version};
+
+    fn resolved_requirement(
+        current: &str,
+        versions: &[&str],
+        include_breaking: bool,
+    ) -> Option<String> {
+        let unit = Unit::Global;
+        let req = Requirement::from_cargo(current.parse().unwrap());
+        let package = Package {
+            purl: "pkg:cargo/example".parse().unwrap(),
+            usages: vec![Usage {
+                unit: unit.clone(),
+                req: req.clone(),
+                kind: DepKind::Normal,
+                rename: None,
+                supported_toolchain_version: None,
+            }],
+            versions: versions
+                .iter()
+                .map(|version| PackageVersion {
+                    version: Version::parse(version).unwrap(),
+                    yanked: false,
+                    features: Default::default(),
+                    required_toolchain_version: None,
+                })
+                .collect(),
+            repository: None,
+            homepage: None,
+        };
+        let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package)])]);
+        resolve_updates(
+            &packages,
+            &VersionStrategy::default(),
+            &[],
+            include_breaking,
+        )
+        .values()
+        .flatten()
+        .next()
+        .map(|update| update.new_req.to_string())
+    }
+
+    #[test]
+    fn uses_latest_nonbreaking_version() {
+        assert_eq!(
+            resolved_requirement("^1.2.0", &["1.4.0", "2.0.0"], false),
+            Some("^1.4.0".to_string())
+        );
+        assert_eq!(
+            resolved_requirement("^1.2.0", &["1.4.0", "2.0.0"], true),
+            Some("^2.0.0".to_string())
+        );
+        assert_eq!(resolved_requirement("^1.2.0", &["2.0.0"], false), None);
+        assert_eq!(
+            resolved_requirement("^1.2.0", &["1.0.0", "2.0.0"], false),
+            None
+        );
+    }
+
+    #[test]
+    fn pre_one_patch_is_nonbreaking() {
+        assert_eq!(
+            resolved_requirement("^0.1.0", &["0.1.5", "0.2.0"], false),
+            Some("^0.1.5".to_string())
+        );
+    }
+
+    #[test]
+    fn major_updates_are_not_preselected() {
+        let unit = Unit::Global;
+        let current_req = Requirement::from_cargo("^1.0.0".parse().unwrap());
+        let usage = Usage {
+            unit: unit.clone(),
+            req: current_req.clone(),
+            kind: DepKind::Normal,
+            rename: None,
+            supported_toolchain_version: None,
+        };
+        let package = Package {
+            purl: "pkg:cargo/example".parse().unwrap(),
+            usages: vec![],
+            versions: vec![],
+            repository: None,
+            homepage: None,
+        };
+        let updates = [VersionBump::Patch, VersionBump::Major, VersionBump::Minor]
+            .into_iter()
+            .map(|bump| Update {
+                name: "example",
+                current_req: &current_req,
+                new_req: Requirement::from_cargo("^2.0.0".parse().unwrap()),
+                bump,
+                yanked: false,
+                usage: &usage,
+                package: &package,
+            })
+            .collect();
+        let grouped = BTreeMap::from([(&unit, updates)]);
+
+        let (groups, default_selected) = selection_groups(&grouped, false);
+
+        assert_eq!(groups[0].updates.len(), 3);
+        assert_eq!(default_selected, vec![true, false, true]);
+    }
 
     #[test]
     fn normalize_git_ssh() {

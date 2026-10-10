@@ -40,7 +40,8 @@ Flags and options:
 | `-u`  | `--update`                   | Update version requirements in project manifests          |
 | `-U`  | `--upgrade`                  | Update requirements and installed dependencies            |
 | -     | `--lockfile-only`            | With `-U`, skip installing JavaScript dependencies        |
-| `-c`  | `--compatible`               | Only semver-compatible updates                            |
+| `-c`  | `--compatible`               | Only versions allowed by current requirements             |
+| `-b`  | `--breaking`                 | Include breaking requirement updates                      |
 | `-p`  | `--package <NAME>`           | Only check specific workspace package(s); repeat for more |
 | -     | `--root <DIR>`               | Root directory to search from                             |
 | -     | `--verbose`                  | Enable verbose output                                     |
@@ -49,6 +50,8 @@ Flags and options:
 | -     | `--compact`                  | Compact interactive mode (less spacing)                   |
 | -     | `--ignore-toolchain-version` | Ignore package toolchain version requirements             |
 | -     | `--fail-on-updates`          | Exit with status code `2` when updates are available      |
+
+`-u` and `-U` choose non-breaking requirement updates by default. Use `--breaking` to include breaking updates, or `--compatible` to stay within existing ranges (for example, `~1.2.0` stays on `1.2.x`).
 
 For all options and flags, see:
 

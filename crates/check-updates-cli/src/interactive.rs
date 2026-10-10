@@ -34,7 +34,11 @@ pub fn print_groups(groups: &[UpdateGroup], show_headers: bool) {
 }
 
 /// Interactive inline picker for dependency updates.
-pub fn prompt_updates(groups: &[UpdateGroup], compact: bool) -> std::io::Result<Vec<usize>> {
+pub fn prompt_updates(
+    groups: &[UpdateGroup],
+    default_selected: &[bool],
+    compact: bool,
+) -> std::io::Result<Vec<usize>> {
     if groups.is_empty() {
         return Ok(Vec::new());
     }
@@ -56,7 +60,7 @@ pub fn prompt_updates(groups: &[UpdateGroup], compact: bool) -> std::io::Result<
         ));
     }
 
-    InlineSelect::new(&term, groups, compact)?.run()
+    InlineSelect::new(&term, groups, default_selected, compact)?.run()
 }
 
 enum LineKind {
@@ -80,9 +84,13 @@ struct InlineSelect<'t> {
 }
 
 impl<'t> InlineSelect<'t> {
-    fn new(term: &'t Term, groups: &[UpdateGroup], compact: bool) -> std::io::Result<Self> {
+    fn new(
+        term: &'t Term,
+        groups: &[UpdateGroup],
+        default_selected: &[bool],
+        compact: bool,
+    ) -> std::io::Result<Self> {
         let mut lines = Vec::new();
-        let mut selected = Vec::new();
         let mut update_line_for_cursor = Vec::new();
         let mut group_line_for_cursor = Vec::new();
         let mut cursor_idx = 0usize;
@@ -97,7 +105,6 @@ impl<'t> InlineSelect<'t> {
             for label in &group.updates {
                 update_line_for_cursor.push(lines.len());
                 group_line_for_cursor.push(group_line_idx);
-                selected.push(true);
                 lines.push(LineKind::Update {
                     cursor_idx,
                     label: label.clone(),
@@ -106,6 +113,8 @@ impl<'t> InlineSelect<'t> {
             }
         }
 
+        assert_eq!(default_selected.len(), cursor_idx);
+
         let term_height = term.size().0 as usize;
         let header_lines = if compact { 1 } else { 3 };
         let window_lines = term_height.saturating_sub(header_lines).max(1);
@@ -113,7 +122,7 @@ impl<'t> InlineSelect<'t> {
         let select = Self {
             term,
             lines,
-            selected,
+            selected: default_selected.to_vec(),
             update_line_for_cursor,
             group_line_for_cursor,
             cursor: 0,

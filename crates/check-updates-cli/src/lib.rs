@@ -38,14 +38,14 @@ pub async fn run(args: cli::Args) {
         log::error!("Failed to select JavaScript package manager: {error}");
         std::process::exit(1);
     }
-    let (cargo_updates, npm_updates) = match cmd::run(&root, &args, has_cargo, has_npm).await {
-        Ok(updates) => updates,
+    let has_updates = match cmd::run(&root, &args, has_cargo, has_npm).await {
+        Ok(has_updates) => has_updates,
         Err(error) => {
             log::error!("Failed to check dependencies: {error}");
             std::process::exit(1);
         }
     };
-    if args.fail_on_updates && (npm_updates || cargo_updates) {
+    if args.fail_on_updates && has_updates {
         std::process::exit(2);
     }
 }

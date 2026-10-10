@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added `-b/--breaking` to include breaking dependency updates in automatic upgrades.
+
+### Changed
+
+- Interactive mode leaves breaking updates unchecked by default. `-u` and `-U` choose the newest non-breaking requirement update unless `--breaking` is set.
+- `-U` now uses `npm update` or `pnpm update --no-save` to refresh installed JavaScript dependencies. Bun still uses `install`.
+
 ## [v0.5.0] - 2026-10-04
 
 ### Added

@@ -13,7 +13,7 @@ pub async fn run(
     args: &cli::Args,
     has_cargo: bool,
     has_npm: bool,
-) -> Result<(bool, bool), String> {
+) -> Result<bool, String> {
     if !has_cargo && !has_npm {
         return Err(format!(
             "No Cargo.toml or package.json found in {}",
@@ -52,20 +52,41 @@ pub async fn run(
     }
 
     let strategy = args.version_strategy();
+    let include_breaking = args.interactive || args.breaking || (!args.update && !args.upgrade);
     let cargo_updates = cargo
         .as_ref()
-        .map(|project| update::resolve_updates(&project.packages, &strategy, &args.package))
+        .map(|project| {
+            update::resolve_updates(
+                &project.packages,
+                &strategy,
+                &args.package,
+                include_breaking,
+            )
+        })
         .unwrap_or_default();
     let npm_updates = npm
         .as_ref()
-        .map(|project| update::resolve_updates(&project.packages, &strategy, &[]))
+        .map(|project| update::resolve_updates(&project.packages, &strategy, &[], include_breaking))
         .unwrap_or_default();
 
     let mixed = has_cargo && has_npm;
     let has_updates = !cargo_updates.is_empty() || !npm_updates.is_empty();
+    let breaking_updates_available = !include_breaking
+        && !has_updates
+        && (cargo.as_ref().is_some_and(|project| {
+            !update::resolve_updates(&project.packages, &strategy, &args.package, true).is_empty()
+        }) || npm.as_ref().is_some_and(|project| {
+            !update::resolve_updates(&project.packages, &strategy, &[], true).is_empty()
+        }));
     if !args.interactive || !has_updates {
         if !has_updates {
-            println!("No packages need version requirement updates.");
+            if breaking_updates_available {
+                println!(
+                    "No non-breaking updates available. Use --breaking to include breaking updates."
+                );
+            } else {
+                println!("No packages need version requirement updates.");
+            }
         } else {
             let mut groups = update::summary_groups(&cargo_updates, mixed);
             groups.extend(update::summary_groups(&npm_updates, mixed));
@@ -78,12 +99,22 @@ pub async fn run(
 
     if args.interactive || args.update || args.upgrade {
         let cargo_count: usize = cargo_updates.values().map(Vec::len).sum();
-        let mut groups = update::selection_groups(&cargo_updates, mixed);
-        groups.extend(update::selection_groups(&npm_updates, mixed));
+        let (mut groups, mut default_selected) = update::selection_groups(&cargo_updates, mixed);
+        let (npm_groups, npm_default_selected) = update::selection_groups(&npm_updates, mixed);
+        groups.extend(npm_groups);
+        default_selected.extend(npm_default_selected);
+        if args.breaking {
+            default_selected.fill(true);
+        }
         let selected = if args.interactive {
-            interactive::prompt_updates(&groups, args.compact).map_err(|error| error.to_string())?
+            interactive::prompt_updates(&groups, &default_selected, args.compact)
+                .map_err(|error| error.to_string())?
         } else {
-            (0..groups.iter().map(|group| group.updates.len()).sum()).collect()
+            default_selected
+                .iter()
+                .enumerate()
+                .filter_map(|(index, selected)| selected.then_some(index))
+                .collect()
         };
         if let Some(project) = &cargo {
             let edits: Vec<_> = cargo_updates
@@ -117,7 +148,7 @@ pub async fn run(
                 cargo::update_lockfile(args.root.as_deref(), args.ignore_toolchain_version)?;
             }
             if npm.is_some() {
-                npm::install_updates(root, args.lockfile_only)?;
+                npm::upgrade_dependencies(root, args.lockfile_only)?;
             }
         }
         if !selected.is_empty() {
@@ -139,5 +170,5 @@ pub async fn run(
             Style::new().dim().apply_to("Run with -u or -U to upgrade.")
         );
     }
-    Ok((!cargo_updates.is_empty(), !npm_updates.is_empty()))
+    Ok(has_updates || breaking_updates_available)
 }

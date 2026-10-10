@@ -148,13 +148,13 @@ impl VersionStrategy {
     /// Select a published version using this strategy.
     pub fn select<'a>(
         &self,
-        versions: &'a [PackageVersion],
+        versions: impl IntoIterator<Item = &'a PackageVersion>,
         requirement: &Requirement,
         current: Option<&Version>,
         supported_toolchain_version: Option<&Version>,
     ) -> Option<&'a Version> {
         versions
-            .iter()
+            .into_iter()
             .filter(|v| !v.yanked)
             .filter(|v| self.allows_prerelease(&v.version, current))
             .filter(|v| !self.compatible || requirement.matches(&v.version))

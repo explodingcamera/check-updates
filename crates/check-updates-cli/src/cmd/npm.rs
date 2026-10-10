@@ -14,7 +14,7 @@ pub async fn fetch(root: &Path, args: &Args) -> Result<NpmPackages, String> {
     .await
 }
 
-pub fn install_updates(root: &Path, lockfile_only: bool) -> Result<(), String> {
+pub fn upgrade_dependencies(root: &Path, lockfile_only: bool) -> Result<(), String> {
     let manager = check_updates::npm::package_manager(root)?;
     let executable = match manager {
         PackageManager::Npm => "npm",
@@ -23,18 +23,27 @@ pub fn install_updates(root: &Path, lockfile_only: bool) -> Result<(), String> {
     };
     let mut command = std::process::Command::new(executable);
     let status = command
-        .args(install_args(manager, lockfile_only))
+        .args(upgrade_args(manager, lockfile_only))
         .current_dir(root)
         .status()
         .map_err(|error| error.to_string())?;
     if !status.success() {
-        return Err(format!("{executable} install failed"));
+        return Err(format!("{executable} upgrade failed"));
     }
     Ok(())
 }
 
-fn install_args(manager: PackageManager, lockfile_only: bool) -> Vec<&'static str> {
-    let mut args = vec!["install"];
+fn upgrade_args(manager: PackageManager, lockfile_only: bool) -> Vec<&'static str> {
+    // For Bun, use `install` rather than `update`: update rewrites package.json, and
+    // `--no-save` also prevents saving the lockfile. See https://github.com/oven-sh/bun/issues/30407.
+    let mut args = if manager == PackageManager::Bun {
+        vec!["install"]
+    } else {
+        vec!["update"]
+    };
+    if manager == PackageManager::Pnpm {
+        args.push("--no-save");
+    }
     if lockfile_only {
         args.push(if manager == PackageManager::Npm {
             "--package-lock-only"
@@ -51,28 +60,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn install_arguments() {
-        for manager in [
-            PackageManager::Npm,
-            PackageManager::Pnpm,
-            PackageManager::Bun,
-        ] {
-            assert_eq!(
-                install_args(manager, false),
-                ["install", "--ignore-scripts"]
-            );
-            assert_eq!(
-                install_args(manager, true),
-                [
-                    "install",
-                    if manager == PackageManager::Npm {
-                        "--package-lock-only"
-                    } else {
-                        "--lockfile-only"
-                    },
-                    "--ignore-scripts"
-                ]
-            );
-        }
+    fn upgrade_arguments() {
+        assert_eq!(
+            upgrade_args(PackageManager::Npm, false),
+            ["update", "--ignore-scripts"]
+        );
+        assert_eq!(
+            upgrade_args(PackageManager::Npm, true),
+            ["update", "--package-lock-only", "--ignore-scripts"]
+        );
+        assert_eq!(
+            upgrade_args(PackageManager::Pnpm, false),
+            ["update", "--no-save", "--ignore-scripts"]
+        );
+        assert_eq!(
+            upgrade_args(PackageManager::Pnpm, true),
+            ["update", "--no-save", "--lockfile-only", "--ignore-scripts"]
+        );
+        assert_eq!(
+            upgrade_args(PackageManager::Bun, false),
+            ["install", "--ignore-scripts"]
+        );
+        assert_eq!(
+            upgrade_args(PackageManager::Bun, true),
+            ["install", "--lockfile-only", "--ignore-scripts"]
+        );
     }
 }

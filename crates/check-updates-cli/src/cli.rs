@@ -37,16 +37,19 @@ pub struct Args {
     #[arg(
         short = 'u',
         long,
-        help = "Update version requirements in project manifests"
+        help = "Update non-breaking version requirements in project manifests"
     )]
     pub update: bool,
 
     #[arg(
         short = 'U',
         long,
-        help = "Update requirements and installed dependencies"
+        help = "Update non-breaking requirements and installed dependencies"
     )]
     pub upgrade: bool,
+
+    #[arg(short = 'b', long, help = "Include breaking requirement updates")]
+    pub breaking: bool,
 
     #[arg(
         long,
@@ -55,7 +58,11 @@ pub struct Args {
     )]
     pub lockfile_only: bool,
 
-    #[arg(short = 'c', long, help = "Only upgrade to semver-compatible versions")]
+    #[arg(
+        short = 'c',
+        long,
+        help = "Only use versions allowed by current requirements"
+    )]
     pub compatible: bool,
 
     #[arg(long, help = "Compact interactive mode (fewer spacing lines)")]
