@@ -91,7 +91,10 @@ impl super::RegistryImpl for CargoRegistry {
         for name in &names {
             if use_local_cache {
                 let crate_name = name.as_str().try_into().map_err(CargoError::from)?;
-                match index.cached_krate(crate_name, &lock) {
+                match index
+                    .cached_krate(crate_name, &lock)
+                    .and_then(|entry| entry.map(|entry| entry.deserialize()).transpose())
+                {
                     Ok(Some(krate)) => {
                         versions.insert(name.clone(), versions_from_krate(&krate));
                         cache_hits += 1;
@@ -113,7 +116,7 @@ impl super::RegistryImpl for CargoRegistry {
                 .map_err(|e| e.to_string());
 
             match request {
-                Ok(req) => requests.push((name.clone(), req)),
+                Ok(req) => requests.push((name.clone(), req.into())),
                 Err(e) => {
                     log::warn!("failed to build cache request for '{name}': {e}");
                 }
@@ -150,7 +153,10 @@ impl super::RegistryImpl for CargoRegistry {
                     }
                 };
 
-                match index.parse_remote_response(crate_name, response, write_cache_entry, &lock) {
+                match index
+                    .parse_remote_response(crate_name, &response, write_cache_entry, &lock)
+                    .and_then(|entry| entry.map(|entry| entry.deserialize()).transpose())
+                {
                     Ok(Some(krate)) => {
                         versions.insert(name, versions_from_krate(&krate));
                     }

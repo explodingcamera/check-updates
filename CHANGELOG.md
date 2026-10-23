@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.6.0] - 2026-10-23
 
 ### Added
 
@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Interactive mode leaves breaking updates unchecked by default. `-u` and `-U` choose the newest non-breaking requirement update unless `--breaking` is set.
 - `-U` now uses `npm update` or `pnpm update --no-save` to refresh installed JavaScript dependencies. Bun still uses `install`.
+- Updated Rust dependencies, including `tame-index`.
+
+### Security
+
+- Updated TLS root certificates to remove distrusted eMudhra certificate authorities. This issue is not known to affect check-updates directly.
 
 ## [v0.5.0] - 2026-10-04
 
