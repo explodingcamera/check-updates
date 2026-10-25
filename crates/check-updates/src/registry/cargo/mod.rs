@@ -87,6 +87,23 @@ impl super::RegistryImpl for CargoRegistry {
         let mut cache_hits = 0usize;
         let policy = self.state.registry_cache_policy();
         let use_local_cache = matches!(policy, RegistryCachePolicy::PreferLocal);
+        let write_cache_entry = !matches!(policy, RegistryCachePolicy::NoCache);
+
+        // A 304 response makes tame-index read the local cache entry instead, so
+        // requests without revalidation drop the conditional headers.
+        let revalidate = write_cache_entry;
+        let make_request =
+            |name: &str, revalidate: bool| -> Result<http::Request<()>, CargoError> {
+                let mut request: http::Request<()> = index
+                    .make_remote_request(name.try_into()?, None, &lock)?
+                    .into();
+                if !revalidate {
+                    let headers = request.headers_mut();
+                    headers.remove(http::header::IF_NONE_MATCH);
+                    headers.remove(http::header::IF_MODIFIED_SINCE);
+                }
+                Ok(request)
+            };
 
         for name in &names {
             if use_local_cache {
@@ -107,16 +124,9 @@ impl super::RegistryImpl for CargoRegistry {
                 }
             }
 
-            let request = index
-                .make_remote_request(
-                    name.as_str().try_into().map_err(CargoError::from)?,
-                    None,
-                    &lock,
-                )
-                .map_err(|e| e.to_string());
-
+            let request = make_request(name, revalidate);
             match request {
-                Ok(req) => requests.push((name.clone(), req.into())),
+                Ok(req) => requests.push((name.clone(), req)),
                 Err(e) => {
                     log::warn!("failed to build cache request for '{name}': {e}");
                 }
@@ -131,20 +141,12 @@ impl super::RegistryImpl for CargoRegistry {
             registry_start.elapsed()
         );
 
-        if !requests.is_empty() {
-            let mut responses = fetch::fetch_all(self.state.client(), requests).await?;
+        let mut revalidated = revalidate;
+        while !requests.is_empty() {
+            let responses =
+                fetch::fetch_all(self.state.client(), std::mem::take(&mut requests)).await?;
 
-            for name in names {
-                if versions.contains_key(&name) {
-                    continue;
-                }
-
-                let response = match responses.remove(&name) {
-                    Some(r) => r,
-                    None => continue,
-                };
-
-                let write_cache_entry = !matches!(policy, RegistryCachePolicy::NoCache);
+            for (name, response) in responses {
                 let crate_name = match name.as_str().try_into() {
                     Ok(name) => name,
                     Err(e) => {
@@ -163,11 +165,23 @@ impl super::RegistryImpl for CargoRegistry {
                     Ok(None) => {
                         log::debug!("no crate data returned for '{name}'");
                     }
+                    // The cache entry can be unreadable, e.g. when cargo wrote it
+                    // in a form tame-index rejects. Fetch the full entry instead.
+                    Err(e)
+                        if revalidated && response.status() == http::StatusCode::NOT_MODIFIED =>
+                    {
+                        log::debug!("refetching '{name}' after unreadable cache entry: {e}");
+                        match make_request(&name, false) {
+                            Ok(req) => requests.push((name, req)),
+                            Err(e) => log::warn!("failed to build request for '{name}': {e}"),
+                        }
+                    }
                     Err(e) => {
                         log::warn!("failed to parse versions for '{name}': {e}");
                     }
                 }
             }
+            revalidated = false;
         }
 
         let workspace_root_manifest: PathBuf = metadata.workspace_root.join("Cargo.toml").into();
@@ -211,13 +225,12 @@ impl super::RegistryImpl for CargoRegistry {
             let new_req = new_req
                 .into_cargo()
                 .ok_or(RegistryError::WrongRequirement)?;
-            // Fan out to every dep-kind section that shares the same unit + req.
-            // This handles the case where a package appears under both
-            // [dependencies] and [dev-dependencies] with the same version.
+            // Fan out to every usage of the same section that shares the same
+            // unit + req. Other dep-kind sections are separate updates.
             let matching_usages = package
                 .usages
                 .iter()
-                .filter(|u| u.unit == usage.unit && u.req == usage.req);
+                .filter(|u| u.unit == usage.unit && u.req == usage.req && u.kind == usage.kind);
 
             for u in matching_usages {
                 let manifest = match u.unit.path() {

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::path::Path;
 
-use check_updates::{Package, Packages, Requirement, Unit, Usage, VersionStrategy};
+use check_updates::{DepKind, Package, Packages, Requirement, Unit, Usage, VersionStrategy};
 use console::Style;
 
 use crate::interactive::{UpdateGroup, display_text};
@@ -19,9 +19,18 @@ pub struct Update<'a> {
 }
 
 fn display_name(update: &Update<'_>) -> String {
-    match update.usage.rename.as_deref() {
+    let name = match update.usage.rename.as_deref() {
         Some(alias) if alias != update.name => format!("{} ({alias})", display_text(update.name)),
         _ => display_text(update.name),
+    };
+    name + kind_label(update).as_str()
+}
+
+/// Marks non-normal dependencies, e.g. ` (dev)`, so entries from different sections are distinguishable.
+fn kind_label(update: &Update<'_>) -> String {
+    match update.usage.kind {
+        DepKind::Normal => String::new(),
+        kind => format!(" ({kind})"),
     }
 }
 
@@ -43,7 +52,7 @@ pub fn resolve_updates<'a>(
     let mut result: BTreeMap<&Unit, Vec<Update>> = BTreeMap::new();
 
     for (unit, entries) in packages {
-        for (req, _dep_kind, package) in entries {
+        for (req, kind, package) in entries {
             let name = package.purl.name();
 
             if !filter.is_empty() && !filter.iter().any(|f| unit_matches_filter(unit, f)) {
@@ -54,7 +63,7 @@ pub fn resolve_updates<'a>(
             let Some(usage) = package
                 .usages
                 .iter()
-                .find(|u| u.unit == *unit && u.req == *req)
+                .find(|u| u.unit == *unit && u.req == *req && u.kind == *kind)
             else {
                 continue;
             };
@@ -169,14 +178,19 @@ pub fn format_update_line(
     let f = &mut line;
 
     let plain_display_name = display_name(update);
+    let label = kind_label(update);
+    let link_text = plain_display_name
+        .strip_suffix(label.as_str())
+        .unwrap_or(&plain_display_name);
     let name_display = update
         .package
         .repository
         .as_ref()
         .map(|url| normalize_repo_url(url))
         .filter(|url| !url.chars().any(char::is_control))
-        .map(|url| hyperlink(&url, &plain_display_name))
-        .unwrap_or_else(|| plain_display_name.clone());
+        .map(|url| hyperlink(&url, link_text))
+        .unwrap_or_else(|| link_text.to_string());
+    let name_display = format!("{name_display}{}", Style::new().dim().apply_to(&label));
 
     // Pad manually since hyperlink escape codes don't count as visible width
     let padding = name_width.saturating_sub(plain_display_name.len());
@@ -284,7 +298,7 @@ pub fn selection_groups(
             widths.0.max(if u.package.purl.package_type() == "npm" {
                 display_name(u).len()
             } else {
-                u.name.len()
+                u.name.len() + kind_label(u).len()
             }),
             widths
                 .1
@@ -346,7 +360,7 @@ fn normalize_repo_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use check_updates::{DepKind, PackageVersion, Version};
+    use check_updates::{PackageVersion, Version};
 
     fn resolved_requirement(
         current: &str,
@@ -404,6 +418,43 @@ mod tests {
             resolved_requirement("^1.2.0", &["1.0.0", "2.0.0"], false),
             None
         );
+    }
+
+    #[test]
+    fn matches_usage_by_dependency_kind() {
+        let unit = Unit::Global;
+        let req = Requirement::from_cargo("^1.0.0".parse().unwrap());
+        let usage = |kind| Usage {
+            unit: unit.clone(),
+            req: req.clone(),
+            kind,
+            rename: None,
+            supported_toolchain_version: None,
+        };
+        let package = Package {
+            purl: "pkg:cargo/example".parse().unwrap(),
+            usages: vec![usage(DepKind::Peer), usage(DepKind::Dev)],
+            versions: vec![PackageVersion {
+                version: Version::parse("1.1.0").unwrap(),
+                yanked: false,
+                features: Default::default(),
+                required_toolchain_version: None,
+            }],
+            repository: None,
+            homepage: None,
+        };
+        let packages = Packages::from([(
+            unit.clone(),
+            vec![
+                (req.clone(), DepKind::Dev, package.clone()),
+                (req.clone(), DepKind::Peer, package),
+            ],
+        )]);
+
+        let updates = resolve_updates(&packages, &VersionStrategy::default(), &[], false);
+        let mut names: Vec<_> = updates[&unit].iter().map(display_name).collect();
+        names.sort();
+        assert_eq!(names, ["example (dev)", "example (peer)"]);
     }
 
     #[test]

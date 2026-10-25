@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Dev, peer, build, and optional dependencies are labeled in the output, for example `hono (dev)`.
+
+### Fixed
+
+- Fixed `failed to parse versions` warnings when the local Cargo index cache has an entry that `tame-index` can't read. The full entry is now fetched from crates.io.
+- `--cache no-cache` no longer revalidates against the local Cargo index cache.
+- Fixed updates for a package listed in more than one section with the same requirement, such as `peerDependencies` and `devDependencies`. Each section is now its own update, so deselecting one in interactive mode leaves that section unchanged.
+
 ## [v0.6.0] - 2026-10-23
 
 ### Added
