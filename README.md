@@ -10,64 +10,27 @@ A simple tool for upgrading your dependencies to the latest version. Supports `c
 
 ```bash
 cargo install check-updates
-```
-
-To install prebuilt binaries with [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall), use:
-
-```bash
+# or if you have cargo-binstall:
 cargo binstall check-updates
 ```
+
+You can also download prebuilt binaries from [GitHub Releases](https://github.com/explodingcamera/check-updates/releases).
 
 [![asciicast](https://asciinema.org/a/AJrlkt3ugmIvq4Y1.svg)](https://asciinema.org/a/AJrlkt3ugmIvq4Y1)
 
 ## CLI usage
 
-Main ways to use it:
-
-- Run `check-updates` to see available dependency updates.
-- Use `check-updates -i` for interactive selection.
-- Use `check-updates -u` to update version requirements in `Cargo.toml` or `package.json`.
-- Use `check-updates -U` to update requirements and installed JavaScript dependencies, or run `cargo update` in Cargo projects.
-- Add `--lockfile-only` to `-U` to skip installing JavaScript dependencies.
-
-Flags and options:
-
-| Short | Long                         | Description                                               |
-| ----- | ---------------------------- | --------------------------------------------------------- |
-| `-i`  | `--interactive`              | Interactive selection UI                                  |
-| `-u`  | `--update`                   | Update version requirements in project manifests          |
-| `-U`  | `--upgrade`                  | Update requirements and installed dependencies            |
-| -     | `--lockfile-only`            | With `-U`, skip installing JavaScript dependencies        |
-| `-c`  | `--compatible`               | Only versions allowed by current requirements             |
-| `-b`  | `--breaking`                 | Include breaking requirement updates                      |
-| `-p`  | `--package <NAME>`           | Only check specific workspace package(s); repeat for more |
-| -     | `--root <DIR>`               | Root directory to search from                             |
-| -     | `--verbose`                  | Enable verbose output                                     |
-| -     | `--cache <MODE>`             | Cache mode: `prefer-local`, `refresh`, or `no-cache`      |
-| -     | `--pre`                      | Include pre-release versions                              |
-| -     | `--compact`                  | Compact interactive mode (less spacing)                   |
-| -     | `--ignore-toolchain-version` | Ignore package toolchain version requirements             |
-| -     | `--fail-on-updates`          | Exit with status code `2` when updates are available      |
-
-Short switches can be combined, for example `check-updates -iU`.
-
-`-u` and `-U` choose non-breaking requirement updates by default. Use `--breaking` to include breaking updates, or `--compatible` to stay within existing ranges (for example, `~1.2.0` stays on `1.2.x`).
-
-pnpm workspace discovery reads the top-level `packages` list in `pnpm-workspace.yaml`. Aliases within that list and top-level YAML merge keys are not supported.
-
-For all options and flags, see:
+Run these commands from your project directory:
 
 ```bash
-check-updates --help
+check-updates        # List available updates without changing files
+check-updates -u     # Update version requirements
+check-updates -U     # Update requirements and installed dependencies
+check-updates -iU    # Choose updates interactively and apply them
+check-updates --help # See all available options
 ```
 
-Generate shell completions with:
-
-```bash
-check-updates generate-shell-completion bash
-```
-
-Supported shells are `bash`, `fish`, `zsh`, and `elvish`.
+Automatic updates are non-breaking by default. Add `-b` to include breaking updates.
 
 ## See also
 
