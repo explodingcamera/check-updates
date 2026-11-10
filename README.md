@@ -4,18 +4,18 @@
 [<img alt="crates.io" src="https://img.shields.io/crates/v/check-updates.svg?style=flat-square&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/check-updates)
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/explodingcamera/check-updates/ci.yaml?branch=main&style=flat-square" height="20">](https://github.com/explodingcamera/check-updates/actions?query=branch%3Amain)
 
-> check-updates is a Rust library and CLI tool for checking if your dependencies are up to date. It can be used as a cargo subcommand or as a standalone tool. Currencly supports only Cargo and npm projects.
+A simple tool for upgrading your dependencies to the latest version. Supports `cargo`, `npm`, `pnpm`, and `bun`.
 
 ## Installation
 
 ```bash
-cargo install check-updates-cli
+cargo install check-updates
 ```
 
 To install prebuilt binaries with [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall), use:
 
 ```bash
-cargo binstall check-updates-cli
+cargo binstall check-updates
 ```
 
 [![asciicast](https://asciinema.org/a/AJrlkt3ugmIvq4Y1.svg)](https://asciinema.org/a/AJrlkt3ugmIvq4Y1)
@@ -29,8 +29,6 @@ Main ways to use it:
 - Use `check-updates -u` to update version requirements in `Cargo.toml` or `package.json`.
 - Use `check-updates -U` to update requirements and installed JavaScript dependencies, or run `cargo update` in Cargo projects.
 - Add `--lockfile-only` to `-U` to skip installing JavaScript dependencies.
-
-Registry checks currently support only crates.io and the public npm registry (registry.npmjs.org). Other registries are not supported.
 
 Flags and options:
 
@@ -51,13 +49,25 @@ Flags and options:
 | -     | `--ignore-toolchain-version` | Ignore package toolchain version requirements             |
 | -     | `--fail-on-updates`          | Exit with status code `2` when updates are available      |
 
+Short switches can be combined, for example `check-updates -iU`.
+
 `-u` and `-U` choose non-breaking requirement updates by default. Use `--breaking` to include breaking updates, or `--compatible` to stay within existing ranges (for example, `~1.2.0` stays on `1.2.x`).
+
+pnpm workspace discovery reads the top-level `packages` list in `pnpm-workspace.yaml`. Aliases within that list and top-level YAML merge keys are not supported.
 
 For all options and flags, see:
 
 ```bash
 check-updates --help
 ```
+
+Generate shell completions with:
+
+```bash
+check-updates generate-shell-completion bash
+```
+
+Supported shells are `bash`, `fish`, `zsh`, and `elvish`.
 
 ## See also
 

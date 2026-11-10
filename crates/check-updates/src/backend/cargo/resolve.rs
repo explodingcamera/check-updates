@@ -53,9 +53,8 @@ pub(super) fn versions_from_krate(krate: &IndexKrate) -> Vec<PackageVersion> {
         .versions
         .iter()
         .filter_map(|v| {
-            let version = Version::parse(&v.version).ok()?;
             Some(PackageVersion {
-                version,
+                version: Version::parse(&v.version).ok()?,
                 yanked: v.is_yanked(),
                 features: v
                     .features()
@@ -170,35 +169,32 @@ pub(super) struct CrateMeta {
 pub(super) fn crate_meta_from_packages(
     all_packages: &[cargo_metadata::Package],
 ) -> HashMap<String, CrateMeta> {
-    let mut best_version: HashMap<String, Version> = HashMap::new();
-    let mut map: HashMap<String, CrateMeta> = HashMap::new();
-
-    for pkg in all_packages {
-        let is_crates_io = pkg.source.as_ref().is_some_and(|s| s.is_crates_io());
-
-        if !is_crates_io {
-            continue;
+    let mut latest: HashMap<&str, &cargo_metadata::Package> = HashMap::new();
+    for package in all_packages.iter().filter(|package| {
+        package
+            .source
+            .as_ref()
+            .is_some_and(|source| source.is_crates_io())
+    }) {
+        if latest
+            .get(package.name.as_str())
+            .is_none_or(|current| current.version < package.version)
+        {
+            latest.insert(package.name.as_str(), package);
         }
-
-        let dominated = best_version
-            .get(pkg.name.as_str())
-            .is_some_and(|existing| existing >= &pkg.version);
-
-        if dominated {
-            continue;
-        }
-
-        best_version.insert(pkg.name.to_string(), pkg.version.clone());
-        map.insert(
-            pkg.name.to_string(),
-            CrateMeta {
-                repository: pkg.repository.clone(),
-                homepage: pkg.homepage.clone(),
-            },
-        );
     }
-
-    map
+    latest
+        .into_iter()
+        .map(|(name, package)| {
+            (
+                name.to_string(),
+                CrateMeta {
+                    repository: package.repository.clone(),
+                    homepage: package.homepage.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 pub(super) fn build_packages(
@@ -207,7 +203,7 @@ pub(super) fn build_packages(
     workspace_root_manifest: &Path,
     crate_meta: &HashMap<String, CrateMeta>,
     inherited_deps: &HashMap<PathBuf, InheritedDeps>,
-) -> impl IntoIterator<Item = Package> + use<> {
+) -> Vec<Package> {
     let mut packages = HashMap::new();
     let workspace_unit = Unit::Workspace {
         manifest: workspace_root_manifest.to_path_buf(),
@@ -215,60 +211,52 @@ pub(super) fn build_packages(
 
     for member in members {
         let member_path: PathBuf = member.manifest_path.clone().into();
-        let member_name = member.name.to_string();
         let member_unit = Unit::Project {
             manifest: member_path.clone(),
-            name: member_name,
+            name: member.name.to_string(),
         };
         let inherited = inherited_deps.get(&member_path);
 
-        member
+        for dep in member
             .dependencies
             .iter()
             .filter(|dep| dep.source.as_ref().is_some_and(|s| s.is_crates_io()))
-            .filter_map(|dep| {
-                Purl::new("cargo".to_string(), dep.name.clone())
-                    .ok()
-                    .map(|purl| (purl, dep))
-            })
-            .for_each(|(purl, dep)| {
-                let unit = if inherited.is_some_and(|set| set.contains(dep)) {
+        {
+            let Ok(purl) = Purl::new("cargo".to_string(), dep.name.clone()) else {
+                continue;
+            };
+            let usage = Usage {
+                unit: if inherited.is_some_and(|set| set.contains(dep)) {
                     workspace_unit.clone()
                 } else {
                     member_unit.clone()
-                };
-
-                let kind = match dep.kind {
+                },
+                req: Requirement::from_cargo(dep.req.clone()),
+                kind: match dep.kind {
                     cargo_metadata::DependencyKind::Normal => DepKind::Normal,
                     cargo_metadata::DependencyKind::Development => DepKind::Dev,
                     cargo_metadata::DependencyKind::Build => DepKind::Build,
                     _ => DepKind::Normal,
-                };
-
-                let usage = Usage {
-                    unit,
-                    req: Requirement::from_cargo(dep.req.clone()),
-                    kind,
-                    rename: dep.rename.clone(),
-                    supported_toolchain_version: member.rust_version.clone(),
-                };
-
-                packages
-                    .entry(purl.clone())
-                    .or_insert_with(|| {
-                        let meta = crate_meta.get(&dep.name);
-                        Package {
-                            purl,
-                            usages: vec![],
-                            versions: versions.get(&dep.name).cloned().unwrap_or_default(),
-                            repository: meta.and_then(|m| m.repository.clone()),
-                            homepage: meta.and_then(|m| m.homepage.clone()),
-                        }
-                    })
-                    .usages
-                    .push(usage);
-            });
+                },
+                rename: dep.rename.clone(),
+                supported_toolchain_version: member.rust_version.clone(),
+            };
+            packages
+                .entry(purl.clone())
+                .or_insert_with(|| {
+                    let meta = crate_meta.get(&dep.name);
+                    Package {
+                        purl,
+                        usages: vec![],
+                        versions: versions.get(&dep.name).cloned().unwrap_or_default(),
+                        repository: meta.and_then(|m| m.repository.clone()),
+                        homepage: meta.and_then(|m| m.homepage.clone()),
+                    }
+                })
+                .usages
+                .push(usage);
+        }
     }
 
-    packages.into_values()
+    packages.into_values().collect()
 }

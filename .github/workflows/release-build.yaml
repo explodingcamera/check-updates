@@ -66,7 +66,7 @@ jobs:
       - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: check-updates,cargo-check-updates
-          package: check-updates-cli
+          package: check-updates
           target: ${{ matrix.target }}
           archive: ${{ matrix.archive }}
           tar-xz: ${{ matrix.archive-format == 'tar.xz' && 'all' || 'none' }}

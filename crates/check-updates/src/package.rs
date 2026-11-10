@@ -238,50 +238,88 @@ mod tests {
     }
 
     #[test]
-    fn latest_respects_strategy_and_yanked_versions() {
+    fn selects_versions() {
         let mut package = Package {
             purl: Purl::new("cargo".to_string(), "example").unwrap(),
             usages: Vec::new(),
-            versions: ["1.0.0", "2.0.0-alpha.1", "3.0.0", "1.2.0"]
+            versions: ["1.0.0", "3.0.0-alpha.1", "4.0.0", "1.5.0", "2.0.0"]
                 .into_iter()
                 .map(|version| PackageVersion {
                     version: Version::parse(version).unwrap(),
-                    yanked: version == "3.0.0",
+                    yanked: version == "4.0.0",
                     features: HashMap::new(),
-                    required_toolchain_version: None,
+                    required_toolchain_version: match version {
+                        "2.0.0" => Some(Version::parse("1.70.0").unwrap()),
+                        "3.0.0-alpha.1" => Some(Version::parse("1.80.0").unwrap()),
+                        _ => None,
+                    },
                 })
                 .collect(),
             repository: None,
             homepage: None,
         };
-        assert!(package.is_version_yanked(&Version::parse("3.0.0").unwrap()));
-        assert!(!package.is_version_yanked(&Version::parse("1.2.0").unwrap()));
-        assert!(!package.is_version_yanked(&Version::parse("4.0.0").unwrap()));
-        #[cfg(feature = "cargo")]
-        {
-            let req = Requirement::from_cargo("^1.0.0".parse().unwrap());
+        for (version, expected) in [("4.0.0", true), ("1.5.0", false), ("5.0.0", false)] {
             assert_eq!(
-                package.latest(&req, &VersionStrategy::stable(), None),
-                Some(&Version::parse("1.2.0").unwrap())
+                package.is_version_yanked(&Version::parse(version).unwrap()),
+                expected
             );
+        }
+        let req = Requirement::from_cargo("^1.0.0".parse().unwrap());
+        for (strategy, supported, expected) in [
+            (VersionStrategy::stable(), None, "2.0.0"),
+            (VersionStrategy::latest(), None, "3.0.0-alpha.1"),
+            (
+                VersionStrategy {
+                    compatible: true,
+                    ..Default::default()
+                },
+                None,
+                "1.5.0",
+            ),
+            (VersionStrategy::stable(), Some("1.60.0"), "1.5.0"),
+            (VersionStrategy::stable(), Some("1.70.0"), "2.0.0"),
+            (
+                VersionStrategy {
+                    ignore_toolchain_version: true,
+                    ..Default::default()
+                },
+                Some("1.60.0"),
+                "2.0.0",
+            ),
+        ] {
+            let supported = supported.map(|version| Version::parse(version).unwrap());
             assert_eq!(
-                package.latest(&req, &VersionStrategy::latest(), None),
-                Some(&Version::parse("2.0.0-alpha.1").unwrap())
+                package.latest(&req, &strategy, supported.as_ref()),
+                Some(&Version::parse(expected).unwrap()),
+                "{strategy:?}, supported={supported:?}"
             );
         }
         package
             .versions
             .iter_mut()
             .for_each(|version| version.yanked = true);
-        #[cfg(feature = "cargo")]
         assert!(
             package
-                .latest(
-                    &Requirement::from_cargo("^1".parse().unwrap()),
-                    &VersionStrategy::stable(),
-                    None
-                )
+                .latest(&req, &VersionStrategy::stable(), None)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn selects_current_prerelease() {
+        let versions: Vec<_> = ["1.0.0-alpha.1", "1.0.0-alpha.2", "1.0.1-alpha.1"]
+            .into_iter()
+            .map(|version| PackageVersion {
+                version: Version::parse(version).unwrap(),
+                yanked: false,
+                features: Default::default(),
+                required_toolchain_version: None,
+            })
+            .collect();
+        let req = Requirement::from_cargo("^1.0.0-alpha.1".parse().unwrap());
+        assert_eq!(
+            VersionStrategy::stable().select(&versions, &req, req.current_version().as_ref(), None),
+            Some(&Version::parse("1.0.0-alpha.2").unwrap())
         );
     }
 }

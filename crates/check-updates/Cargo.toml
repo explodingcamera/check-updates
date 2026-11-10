@@ -2,39 +2,60 @@
 name = "check-updates"
 version.workspace = true
 edition.workspace = true
-description = "Library for checking for updates to Cargo and npm dependencies"
+description = "Check and update Cargo and JavaScript dependencies"
 readme = "../../README.md"
 repository.workspace = true
 license.workspace = true
 keywords = ["cargo", "dependencies", "npm", "updates"]
 categories = ["development-tools"]
+default-run = "check-updates"
+
+[package.metadata.binstall]
+bin-dir = "{ bin }{ binary-ext }"
+pkg-url = "{ repo }/releases/download/v{ version }/check-updates-amd64-linux.tar.xz"
+pkg-fmt = "txz"
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/check-updates-amd64-linux.tar.xz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/check-updates-amd64-windows.zip"
+pkg-fmt = "zip"
+
+[package.metadata.binstall.overrides.aarch64-unknown-linux-gnu]
+pkg-url = "{ repo }/releases/download/v{ version }/check-updates-arm64-linux.tar.xz"
+
+[package.metadata.binstall.overrides.aarch64-apple-darwin]
+pkg-url = "{ repo }/releases/download/v{ version }/check-updates-arm64-darwin.tar.xz"
+
+[[bin]]
+name = "check-updates"
+path = "src/bin/check-updates.rs"
+
+[[bin]]
+name = "cargo-check-updates"
+path = "src/bin/cargo-check-updates.rs"
 
 [dependencies]
+cargo_metadata.workspace = true
 disponent.workspace = true
+http.workspace = true
 log.workspace = true
+nodejs-semver.workspace = true
 purl.workspace = true
 reqwest.workspace = true
 semver.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+tame-index.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
-# Cargo
-cargo_metadata = { workspace = true, optional = true }
-http = { workspace = true, optional = true }
-tame-index = { workspace = true, optional = true }
-toml_edit = { workspace = true, optional = true }
-
-# npm
-glob = { workspace = true, optional = true }
-nodejs-semver = { workspace = true, optional = true }
-serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
-serde-saphyr = { workspace = true, optional = true }
+toml_edit.workspace = true
+console = { workspace = true, features = ["std"] }
+glob.workspace = true
+granit-parser = { version = "2.1.0", default-features = false, features = ["std"] }
+bpaf = { version = "0.9.28", features = ["derive", "autocomplete", "bright-color"] }
+owo-colors = { version = "4.4.0", features = ["supports-colors"] }
 
 [dev-dependencies]
 tempfile.workspace = true
-
-[features]
-default = ["cargo", "npm"]
-cargo = ["dep:cargo_metadata", "dep:http", "dep:tame-index", "dep:toml_edit"]
-npm = ["dep:glob", "dep:nodejs-semver", "dep:serde", "dep:serde_json", "dep:serde-saphyr"]

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::registry::cargo::CargoError;
-use http::{Request, Response, StatusCode};
+use super::CargoError;
+use http::{Request, Response};
 use tokio::task::JoinSet;
 
 const MAX_CONCURRENT_FETCHES: usize = 16;
@@ -26,14 +26,9 @@ pub async fn fetch_all(
         }
 
         if let Some(result) = tasks.join_next().await {
-            let (name, response) = result.map_err(|e| {
-                log::warn!("fetch task failed: {e}");
-                CargoError::from(e)
-            })?;
-            let response = response.map_err(|e| {
-                log::warn!("failed to fetch index for '{name}': {e}");
-                e
-            })?;
+            let (name, response) = result.inspect_err(|e| log::warn!("fetch task failed: {e}"))?;
+            let response =
+                response.inspect_err(|e| log::warn!("failed to fetch index for '{name}': {e}"))?;
 
             results.insert(name, response);
         }
@@ -46,20 +41,16 @@ async fn fetch_one(
     client: &reqwest::Client,
     request: Request<()>,
 ) -> Result<Response<Vec<u8>>, CargoError> {
-    let mut req = client.get(request.uri().to_string());
-    for (name, value) in request.headers() {
-        req = req.header(name, value);
-    }
-
-    let resp = req.send().await?;
-    let status =
-        StatusCode::from_u16(resp.status().as_u16()).map_err(|e| CargoError::Http(e.into()))?;
-    let mut builder = Response::builder().status(status);
+    let resp = client
+        .get(request.uri().to_string())
+        .headers(request.headers().clone())
+        .send()
+        .await?;
+    let mut builder = Response::builder().status(resp.status());
     if let Some(headers) = builder.headers_mut() {
-        for (name, value) in resp.headers() {
-            headers.append(name, value.clone());
-        }
+        *headers = resp.headers().clone();
     }
-    let bytes = resp.bytes().await?;
-    builder.body(bytes.to_vec()).map_err(CargoError::Http)
+    builder
+        .body(resp.bytes().await?.to_vec())
+        .map_err(CargoError::Http)
 }

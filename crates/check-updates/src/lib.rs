@@ -1,36 +1,29 @@
-#[cfg(not(any(feature = "cargo", feature = "npm")))]
-compile_error!("enable at least one backend feature: cargo or npm");
-
-#[cfg(feature = "cargo")]
 use std::collections::HashSet;
 use std::path::PathBuf;
-#[cfg(feature = "cargo")]
 use std::rc::Rc;
 use std::time::Duration;
 
 use reqwest::Client;
 
-#[cfg(feature = "cargo")]
-use crate::registry::*;
+pub mod cli;
+mod cmd;
+mod interactive;
+mod update;
+mod version;
+pub use cli::run;
 
-#[cfg(any(feature = "cargo", feature = "npm"))]
+use crate::backend::{CargoBackend, RegistryError};
+
+mod backend;
 mod package;
-mod registry;
-#[cfg(any(feature = "cargo", feature = "npm"))]
 mod requirement;
 
-#[cfg(any(feature = "cargo", feature = "npm"))]
+pub use backend::npm;
 pub use package::{DepKind, Package, PackageVersion, Packages, Unit, Usage, VersionStrategy};
-#[cfg(feature = "npm")]
-pub use registry::npm;
-#[cfg(feature = "npm")]
 pub use requirement::NpmRequirementError;
-#[cfg(any(feature = "cargo", feature = "npm"))]
 pub use requirement::Requirement;
-/// Concrete published version shared by all supported registries.
 pub use semver::Version;
 
-#[cfg(any(feature = "cargo", feature = "npm"))]
 type Purl = purl::GenericPurl<String>;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -89,61 +82,53 @@ impl State {
     }
 }
 
-#[cfg(feature = "cargo")]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("registry error: {0}")]
     Registry(#[from] RegistryError),
 }
 
-#[cfg(feature = "cargo")]
 pub struct CheckUpdates {
-    cargo: Registry,
+    cargo: CargoBackend,
 }
 
-#[cfg(feature = "cargo")]
 impl CheckUpdates {
     pub fn new(root: Option<PathBuf>) -> Self {
         Self::with_options(root, Options::default())
     }
 
     pub fn with_options(root: Option<PathBuf>, options: Options) -> Self {
-        let state = Rc::new(State::new(root, options));
-        let cargo = CargoRegistry::new(state.clone());
-
         Self {
-            cargo: cargo.into(),
+            cargo: CargoBackend::new(Rc::new(State::new(root, options))),
         }
     }
 
     pub async fn packages(&self) -> Result<Packages, Error> {
-        let mut res: Packages = Default::default();
+        let mut packages = Packages::new();
         // Track (unit, package_name, req, kind) to deduplicate while still
         // preserving distinct dep sections in output.
-        let mut seen: HashSet<(Unit, String, String, DepKind)> = HashSet::new();
+        let mut seen = HashSet::new();
         for package in self.cargo.packages().await? {
             for usage in &package.usages {
                 // Wildcard requirements have nothing to update.
-                if usage.req.is_wildcard() {
+                if usage.req.is_wildcard()
+                    || !seen.insert((
+                        usage.unit.clone(),
+                        package.purl.name().to_string(),
+                        usage.req.to_string(),
+                        usage.kind,
+                    ))
+                {
                     continue;
                 }
-                let key = (
-                    usage.unit.clone(),
-                    package.purl.name().to_string(),
-                    usage.req.to_string(),
-                    usage.kind,
-                );
-                if !seen.insert(key) {
-                    continue;
-                }
-                res.entry(usage.unit.clone()).or_default().push((
+                packages.entry(usage.unit.clone()).or_default().push((
                     usage.req.clone(),
                     usage.kind,
                     package.clone(),
                 ));
             }
         }
-        Ok(res)
+        Ok(packages)
     }
 
     /// Update the locally installed versions of the given packages to the one specified

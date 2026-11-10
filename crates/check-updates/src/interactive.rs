@@ -1,4 +1,111 @@
-use console::{Key, Term, style};
+use std::future::Future;
+use std::sync::{Mutex, mpsc};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+use console::{Key, Term};
+use owo_colors::{OwoColorize, Stream, Style};
+
+static SPINNER_LINE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Write logs without overwriting the spinner.
+pub struct Logger;
+
+impl log::Log for Logger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::max_level()
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let level = match record.level() {
+            log::Level::Error => Style::new().red(),
+            log::Level::Warn => Style::new().yellow(),
+            log::Level::Info => Style::new().blue(),
+            log::Level::Debug => Style::new().cyan(),
+            log::Level::Trace => Style::new().magenta(),
+        };
+        let message = format!(
+            "{}: {}",
+            record
+                .level()
+                .if_supports_color(Stream::Stderr, |text| text.style(level)),
+            display_text(&record.args().to_string())
+        );
+        let line = SPINNER_LINE.lock().unwrap();
+        let term = Term::stderr();
+        if line.is_some() {
+            let _ = term.clear_line();
+        }
+        let _ = term.write_line(&message);
+        if let Some(line) = line.as_ref() {
+            let _ = term.write_str(line);
+        }
+    }
+
+    fn flush(&self) {
+        let _ = Term::stderr().flush();
+    }
+}
+
+struct Spinner {
+    stop: mpsc::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Drop for Spinner {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Show a spinner while a future runs.
+pub async fn with_spinner<F: Future>(message: &str, future: F) -> F::Output {
+    let term = Term::stderr();
+    if !term.is_term() {
+        return future.await;
+    }
+
+    let message = message.to_owned();
+    let (stop, receiver) = mpsc::channel();
+    let Ok(thread) = thread::Builder::new().spawn(move || {
+        for frame in "⠁⠁⠉⠙⠚⠒⠂⠂⠒⠲⠴⠤⠄⠄⠤⠠⠠⠤⠦⠖⠒⠐⠐⠒⠓⠋⠉⠈⠈".chars().cycle()
+        {
+            {
+                let line = format!(
+                    "{} {message}",
+                    frame.if_supports_color(Stream::Stderr, |frame| frame.cyan())
+                );
+                let width = term.size().1.saturating_sub(1) as usize;
+                let line = console::truncate_str(&line, width, "").into_owned();
+                let mut spinner_line = SPINNER_LINE.lock().unwrap();
+                let _ = term.clear_line();
+                let _ = term.write_str(&line);
+                *spinner_line = Some(line);
+            }
+            match receiver.recv_timeout(Duration::from_millis(80)) {
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                _ => break,
+            }
+        }
+        let mut line = SPINNER_LINE.lock().unwrap();
+        if line.take().is_some() {
+            let _ = term.clear_line();
+        }
+    }) else {
+        return future.await;
+    };
+    let _spinner = Spinner {
+        stop,
+        thread: Some(thread),
+    };
+    future.await
+}
 
 /// Display-ready updates from any backend.
 #[derive(Clone)]
@@ -25,7 +132,12 @@ pub fn print_groups(groups: &[UpdateGroup], show_headers: bool) {
             println!();
         }
         if show_headers {
-            println!("{}", style(&group.name).bold());
+            println!(
+                "{}",
+                group
+                    .name
+                    .if_supports_color(Stream::Stdout, |text| text.bold())
+            );
         }
         for update in &group.updates {
             println!("{update}");
@@ -83,6 +195,12 @@ struct InlineSelect<'t> {
     colors: bool,
 }
 
+impl Drop for InlineSelect<'_> {
+    fn drop(&mut self) {
+        let _ = self.term.show_cursor();
+    }
+}
+
 impl<'t> InlineSelect<'t> {
     fn new(
         term: &'t Term,
@@ -130,10 +248,11 @@ impl<'t> InlineSelect<'t> {
             header_lines,
             window_lines,
             compact,
-            colors: term.features().colors_supported(),
+            colors: console::colors_enabled_stderr(),
         };
 
-        select.reserve_space_and_render()?;
+        term.hide_cursor()?;
+        select.render_content()?;
         Ok(select)
     }
 
@@ -149,9 +268,9 @@ impl<'t> InlineSelect<'t> {
             };
 
             match key {
-                Key::ArrowUp | Key::Char('k') => self.move_cursor(-1),
-                Key::ArrowDown | Key::Char('j') => self.move_cursor(1),
-                Key::Char(' ') => self.toggle_and_advance(),
+                Key::ArrowUp | Key::Char('k') => self.move_cursor(-1)?,
+                Key::ArrowDown | Key::Char('j') => self.move_cursor(1)?,
+                Key::Char(' ') => self.toggle_and_advance()?,
                 Key::Enter => {
                     self.clear()?;
                     return Ok(self.collect_selected());
@@ -189,20 +308,20 @@ impl<'t> InlineSelect<'t> {
         start
     }
 
-    fn move_cursor(&mut self, delta: isize) {
+    fn move_cursor(&mut self, delta: isize) -> std::io::Result<()> {
         let count = self.update_line_for_cursor.len();
         self.cursor = (self.cursor as isize + delta).rem_euclid(count as isize) as usize;
         self.adjust_scroll();
-        let _ = self.render();
+        self.render()
     }
 
-    fn toggle_and_advance(&mut self) {
+    fn toggle_and_advance(&mut self) -> std::io::Result<()> {
         self.selected[self.cursor] = !self.selected[self.cursor];
         if self.update_line_for_cursor.len() > 1 {
             self.cursor = (self.cursor + 1) % self.update_line_for_cursor.len();
         }
         self.adjust_scroll();
-        let _ = self.render();
+        self.render()
     }
 
     fn adjust_scroll(&mut self) {
@@ -258,11 +377,6 @@ impl<'t> InlineSelect<'t> {
             .collect()
     }
 
-    fn reserve_space_and_render(&self) -> std::io::Result<()> {
-        self.term.hide_cursor()?;
-        self.render_content()
-    }
-
     fn render(&self) -> std::io::Result<()> {
         self.term
             .move_cursor_up(self.total_lines().saturating_sub(1))?;
@@ -279,7 +393,7 @@ impl<'t> InlineSelect<'t> {
 
         frame.push(format!(
             "  {}",
-            style("Choose which packages to update").bold()
+            "Choose which packages to update".if_supports_color(Stream::Stderr, |text| text.bold())
         ));
 
         if !self.compact {
@@ -292,7 +406,10 @@ impl<'t> InlineSelect<'t> {
             } else {
                 "  (↑↓ jk navigate, space toggle, enter confirm)".to_string()
             };
-            frame.push(style(nav).dim().to_string());
+            frame.push(
+                nav.if_supports_color(Stream::Stderr, |text| text.dimmed())
+                    .to_string(),
+            );
         }
 
         let mut written = 0;
@@ -310,7 +427,11 @@ impl<'t> InlineSelect<'t> {
         if sticky_group {
             let group_line = self.group_line_for_cursor[self.cursor];
             if let LineKind::Group(name) = &self.lines[group_line] {
-                frame.push(format!("  {}", style(name).blue().bold()));
+                frame.push(format!(
+                    "  {}",
+                    name.if_supports_color(Stream::Stderr, |text| text
+                        .style(Style::new().blue().bold()))
+                ));
                 written += 1;
             }
         }
@@ -326,7 +447,11 @@ impl<'t> InlineSelect<'t> {
                 }
                 LineKind::Group(name) => {
                     if !sticky_group || idx != self.group_line_for_cursor[self.cursor] {
-                        frame.push(format!("  {}", style(name).blue().bold()));
+                        frame.push(format!(
+                            "  {}",
+                            name.if_supports_color(Stream::Stderr, |text| text
+                                .style(Style::new().blue().bold()))
+                        ));
                         written += 1;
                     }
                 }
@@ -335,14 +460,18 @@ impl<'t> InlineSelect<'t> {
                 } => {
                     let is_current = *cursor_idx == self.cursor;
                     let checkbox = self.format_checkbox(self.selected[*cursor_idx], is_current);
-                    let prefix = if is_current { ">" } else { " " };
-
-                    let line = if is_current {
-                        format!("{} {} {}", style(prefix).cyan().bold(), checkbox, label)
+                    frame.push(if is_current {
+                        format!(
+                            "{} {checkbox} {label}",
+                            ">".if_supports_color(Stream::Stderr, |text| text
+                                .style(Style::new().cyan().bold()))
+                        )
                     } else {
-                        format!("{} {} {}", prefix, checkbox, style(label).dim())
-                    };
-                    frame.push(line);
+                        format!(
+                            "  {checkbox} {}",
+                            label.if_supports_color(Stream::Stderr, |text| text.dimmed())
+                        )
+                    });
                     written += 1;
                 }
             }
@@ -354,10 +483,6 @@ impl<'t> InlineSelect<'t> {
 
         for _ in written..target {
             frame.push(String::new());
-        }
-
-        if frame.is_empty() {
-            return Ok(());
         }
 
         // Keep the cursor anchored in-place by avoiding an extra trailing newline
@@ -378,21 +503,18 @@ impl<'t> InlineSelect<'t> {
             "[ ]"
         };
 
-        let styled = if selected && self.colors {
-            style(sym).green().to_string()
-        } else {
-            sym.to_string()
-        };
-
-        if current {
-            if self.colors {
-                style(styled).cyan().bold().to_string()
-            } else {
-                style(styled).bold().to_string()
-            }
-        } else {
-            styled
+        let mut style = Style::new();
+        if selected && self.colors {
+            style = style.green();
         }
+        if current {
+            style = style.bold();
+            if self.colors {
+                style = style.cyan();
+            }
+        }
+        sym.if_supports_color(Stream::Stderr, |text| text.style(style))
+            .to_string()
     }
 
     fn clear(&self) -> std::io::Result<()> {

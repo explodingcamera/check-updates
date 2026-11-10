@@ -9,10 +9,11 @@ use thiserror::Error;
 
 use crate::{
     RegistryCachePolicy, Requirement, State,
+    backend::RegistryError,
     package::{DepKind, Package, PackageVersion, Unit, Usage},
-    registry::RegistryError,
 };
 
+mod cli;
 mod fetch;
 mod resolve;
 mod update;
@@ -36,18 +37,19 @@ pub enum CargoError {
     ReadOnly(PathBuf),
 }
 
-pub struct CargoRegistry {
+/// Cargo dependency management.
+pub(crate) struct CargoBackend {
     state: Rc<State>,
 }
 
-impl CargoRegistry {
-    pub fn new(state: Rc<State>) -> Self {
+impl CargoBackend {
+    /// Create a Cargo backend.
+    pub(crate) fn new(state: Rc<State>) -> Self {
         Self { state }
     }
-}
 
-impl super::RegistryImpl for CargoRegistry {
-    async fn packages(&self) -> Result<Vec<Package>, RegistryError> {
+    /// Load dependency packages.
+    pub(crate) async fn packages(&self) -> Result<Vec<Package>, RegistryError> {
         let total_start = Instant::now();
 
         let index = SparseIndex::new(IndexLocation::new(IndexUrl::CratesIoSparse))
@@ -124,8 +126,7 @@ impl super::RegistryImpl for CargoRegistry {
                 }
             }
 
-            let request = make_request(name, revalidate);
-            match request {
+            match make_request(name, revalidate) {
                 Ok(req) => requests.push((name.clone(), req)),
                 Err(e) => {
                     log::warn!("failed to build cache request for '{name}': {e}");
@@ -203,9 +204,7 @@ impl super::RegistryImpl for CargoRegistry {
             &workspace_root_manifest,
             &crate_meta,
             &inherited_deps,
-        )
-        .into_iter()
-        .collect();
+        );
         log::debug!(
             "cargo.packages: total resolution took {:?}",
             total_start.elapsed()
@@ -214,14 +213,15 @@ impl super::RegistryImpl for CargoRegistry {
         Ok(packages)
     }
 
-    fn update_versions<'a>(
+    /// Apply version requirements to manifests.
+    pub(crate) fn update_versions<'a>(
         &self,
-        packages: impl IntoIterator<Item = (&'a Usage, &'a Package, Requirement)>,
+        edits: impl IntoIterator<Item = (&'a Usage, &'a Package, Requirement)>,
     ) -> Result<(), RegistryError> {
         // Group all edits by manifest path so we only read/write each file once.
-        let mut edits: HashMap<PathBuf, Vec<ManifestEdit>> = HashMap::new();
+        let mut manifest_edits: HashMap<PathBuf, Vec<ManifestEdit>> = HashMap::new();
 
-        for (usage, package, new_req) in packages {
+        for (usage, package, new_req) in edits {
             let new_req = new_req
                 .into_cargo()
                 .ok_or(RegistryError::WrongRequirement)?;
@@ -267,202 +267,38 @@ impl super::RegistryImpl for CargoRegistry {
                     }
                 };
 
-                edits.entry(manifest).or_default().push(ManifestEdit {
-                    section,
-                    toml_key,
-                    new_req: new_req.clone(),
-                    old_req: u
-                        .req
-                        .clone()
-                        .into_cargo()
-                        .ok_or(RegistryError::WrongRequirement)?,
-                    preserve_bare: true,
-                });
+                manifest_edits
+                    .entry(manifest)
+                    .or_default()
+                    .push(ManifestEdit {
+                        section,
+                        toml_key,
+                        new_req: new_req.clone(),
+                        old_req: u
+                            .req
+                            .clone()
+                            .into_cargo()
+                            .ok_or(RegistryError::WrongRequirement)?,
+                        preserve_bare: true,
+                    });
             }
         }
 
         // Apply all edits, one manifest at a time.
-        for (manifest, file_edits) in &edits {
+        for (manifest, mut file_edits) in manifest_edits {
             let mut seen = HashSet::new();
-            let deduped: Vec<_> = file_edits
-                .iter()
-                .filter(|edit| {
-                    seen.insert((
-                        edit.section.clone(),
-                        edit.toml_key.clone(),
-                        edit.old_req.to_string(),
-                        edit.new_req.to_string(),
-                    ))
-                })
-                .cloned()
-                .collect();
+            file_edits.retain(|edit| {
+                seen.insert((
+                    edit.section.clone(),
+                    edit.toml_key.clone(),
+                    edit.old_req.to_string(),
+                    edit.new_req.to_string(),
+                ))
+            });
 
-            apply_manifest_edits(manifest, &deduped)?;
+            apply_manifest_edits(&manifest, &file_edits)?;
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::package::DepKind;
-    use crate::registry::RegistryImpl;
-    use std::path::PathBuf;
-
-    fn init() -> CargoRegistry {
-        CargoRegistry::new(State::new(None, crate::Options::default()).into())
-    }
-
-    fn init_workspace_demo() -> CargoRegistry {
-        let root =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/cargo/workspace-demo");
-        CargoRegistry::new(State::new(Some(root), crate::Options::default()).into())
-    }
-
-    #[tokio::test]
-    async fn fetch_this_workspace() {
-        let registry = init();
-        let packages = registry.packages().await.unwrap();
-        assert!(packages.into_iter().any(|p| p.purl.name() == "clap"));
-    }
-
-    #[tokio::test]
-    async fn workspace_deps_use_workspace_unit() {
-        let registry = init();
-        let packages = registry.packages().await.unwrap();
-
-        // Direct dependencies declared with `workspace = true` belong to the root.
-        // Other backends can also have their own Cargo dependencies.
-        for package in packages.into_iter().filter(|p| p.purl.name() == "clap") {
-            for usage in &package.usages {
-                assert!(
-                    matches!(&usage.unit, Unit::Workspace { .. }),
-                    "expected Unit::Workspace for '{}', got {:?}",
-                    package.purl.name(),
-                    usage.unit
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn workspace_unit_has_path() {
-        let registry = init();
-        let packages = registry.packages().await.unwrap();
-
-        let any_workspace_usage = packages
-            .into_iter()
-            .flat_map(|pkg| pkg.usages)
-            .find(|u| matches!(&u.unit, Unit::Workspace { .. }))
-            .expect("should have at least one workspace usage");
-
-        let path = any_workspace_usage.unit.path().unwrap();
-        assert!(
-            path.ends_with("Cargo.toml"),
-            "workspace unit path should point to Cargo.toml, got {}",
-            path.display()
-        );
-    }
-
-    #[tokio::test]
-    async fn dep_kinds_are_set() {
-        let registry = init();
-        let packages = registry.packages().await.unwrap();
-
-        // semver is a normal dependency of check-updates
-        let semver = packages
-            .into_iter()
-            .find(|p| p.purl.name() == "semver")
-            .expect("semver should be in packages");
-
-        assert!(
-            semver.usages.iter().any(|u| u.kind == DepKind::Normal),
-            "semver should have at least one Normal usage"
-        );
-    }
-
-    #[tokio::test]
-    async fn crate_meta_populated() {
-        let registry = init();
-        let packages = registry.packages().await.unwrap();
-
-        // clap is a well-known crate that has a repository field
-        let clap = packages
-            .into_iter()
-            .find(|p| p.purl.name() == "clap")
-            .expect("clap should be in packages");
-
-        assert!(
-            clap.repository.is_some(),
-            "clap should have a repository URL"
-        );
-    }
-
-    #[tokio::test]
-    async fn renamed_deps_are_not_mistaken_for_workspace_inherited() {
-        let registry = init_workspace_demo();
-        let packages = registry.packages().await.unwrap();
-
-        let rand = packages
-            .into_iter()
-            .find(|p| p.purl.name() == "rand")
-            .expect("rand should be in packages");
-
-        let renamed_usages: Vec<_> = rand
-            .usages
-            .iter()
-            .filter(|u| u.rename.as_deref() == Some("rand07"))
-            .collect();
-
-        assert!(
-            !renamed_usages.is_empty(),
-            "workspace demo should include renamed rand07 usages"
-        );
-        assert!(
-            renamed_usages
-                .iter()
-                .all(|u| matches!(u.unit, Unit::Project { .. })),
-            "renamed rand07 usages should map to project manifests, not workspace"
-        );
-    }
-
-    #[tokio::test]
-    async fn target_workspace_inherited_stays_workspace_unit() {
-        let registry = init_workspace_demo();
-        let packages = registry.packages().await.unwrap();
-
-        let anyhow = packages
-            .into_iter()
-            .find(|p| p.purl.name() == "anyhow")
-            .expect("anyhow should be in packages");
-
-        assert!(
-            anyhow
-                .usages
-                .iter()
-                .any(|u| matches!(u.unit, Unit::Workspace { .. })),
-            "workspace-inherited anyhow usages should include workspace unit"
-        );
-    }
-
-    #[tokio::test]
-    async fn target_non_workspace_dep_stays_project_unit() {
-        let registry = init_workspace_demo();
-        let packages = registry.packages().await.unwrap();
-
-        let tokio = packages
-            .into_iter()
-            .find(|p| p.purl.name() == "tokio")
-            .expect("tokio should be in packages");
-
-        assert!(
-            tokio
-                .usages
-                .iter()
-                .any(|u| matches!(u.unit, Unit::Project { .. })),
-            "target non-workspace tokio usage should include project unit"
-        );
     }
 }

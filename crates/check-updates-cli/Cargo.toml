@@ -2,8 +2,8 @@
 name = "check-updates-cli"
 version.workspace = true
 edition.workspace = true
-description = "CLI for checking for updates to Cargo and JavaScript dependencies"
-readme = "../../README.md"
+description = "Compatibility package for the check-updates CLI"
+readme = "README.md"
 repository.workspace = true
 license.workspace = true
 keywords = ["cargo", "cli", "dependencies", "npm", "updates"]
@@ -41,14 +41,3 @@ path = "src/bin/check-updates.rs"
 
 [dependencies]
 check-updates.workspace = true
-clap.workspace = true
-clap_complete.workspace = true
-console = { workspace = true, features = ["std"] }
-env_logger.workspace = true
-indicatif.workspace = true
-log.workspace = true
-tokio.workspace = true
-
-[dev-dependencies]
-semver.workspace = true
-tempfile.workspace = true

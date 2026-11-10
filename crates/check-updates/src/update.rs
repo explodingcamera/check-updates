@@ -1,9 +1,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
-use std::path::Path;
 
-use check_updates::{DepKind, Package, Packages, Requirement, Unit, Usage, VersionStrategy};
-use console::Style;
+use crate::{DepKind, Package, Packages, Requirement, Unit, Usage, VersionStrategy};
+use owo_colors::{OwoColorize, Stream};
 
 use crate::interactive::{UpdateGroup, display_text};
 use crate::version::{VersionBump, colorize_req, version_bump};
@@ -18,19 +17,27 @@ pub struct Update<'a> {
     pub package: &'a Package,
 }
 
+/// Dependency updates grouped by project.
+pub type Updates<'a> = BTreeMap<&'a Unit, Vec<Update<'a>>>;
+
 fn display_name(update: &Update<'_>) -> String {
     let name = match update.usage.rename.as_deref() {
-        Some(alias) if alias != update.name => format!("{} ({alias})", display_text(update.name)),
+        Some(alias) if alias != update.name => {
+            format!("{} ({})", display_text(update.name), display_text(alias))
+        }
         _ => display_text(update.name),
     };
-    name + kind_label(update).as_str()
+    name + kind_label(update)
 }
 
 /// Marks non-normal dependencies, e.g. ` (dev)`, so entries from different sections are distinguishable.
-fn kind_label(update: &Update<'_>) -> String {
+fn kind_label(update: &Update<'_>) -> &'static str {
     match update.usage.kind {
-        DepKind::Normal => String::new(),
-        kind => format!(" ({kind})"),
+        DepKind::Normal => "",
+        DepKind::Dev => " (dev)",
+        DepKind::Build => " (build)",
+        DepKind::Optional => " (optional)",
+        DepKind::Peer => " (peer)",
     }
 }
 
@@ -46,20 +53,32 @@ fn display_requirement(update: &Update<'_>, requirement: &Requirement) -> String
 pub fn resolve_updates<'a>(
     packages: &'a Packages,
     strategy: &VersionStrategy,
-    filter: &[String],
     include_breaking: bool,
-) -> BTreeMap<&'a Unit, Vec<Update<'a>>> {
-    let mut result: BTreeMap<&Unit, Vec<Update>> = BTreeMap::new();
+) -> Updates<'a> {
+    let mut result = Updates::new();
 
     for (unit, entries) in packages {
         for (req, kind, package) in entries {
             let name = package.purl.name();
 
-            if !filter.is_empty() && !filter.iter().any(|f| unit_matches_filter(unit, f)) {
-                continue;
-            }
-
             let current = req.current_version();
+            let bump_for = |candidate| {
+                let bump = current
+                    .as_ref()
+                    .map(|current| version_bump(current, candidate))
+                    .unwrap_or(VersionBump::Major);
+                // Existing ranges can already allow a version classified as major.
+                if bump == VersionBump::Major
+                    && current
+                        .as_ref()
+                        .is_none_or(|current| current.pre.is_empty())
+                    && req.matches(candidate)
+                {
+                    VersionBump::Patch
+                } else {
+                    bump
+                }
+            };
             let Some(usage) = package
                 .usages
                 .iter()
@@ -71,32 +90,30 @@ pub fn resolve_updates<'a>(
                 .usages
                 .iter()
                 .filter(|u| u.unit == *unit && u.req == *req)
-                .filter_map(|u| u.supported_toolchain_version.clone())
+                .filter_map(|u| u.supported_toolchain_version.as_ref())
                 .min();
             let latest_for = |strategy: &VersionStrategy, supported| {
                 strategy.select(
                     package.versions.iter().filter(|candidate| {
-                        include_breaking
-                            || current.as_ref().is_some_and(|current| {
-                                candidate.version >= *current
-                                    && version_bump(current, &candidate.version)
-                                        != VersionBump::Major
-                            })
+                        current
+                            .as_ref()
+                            .is_none_or(|current| candidate.version >= *current)
+                            && (include_breaking
+                                || bump_for(&candidate.version) != VersionBump::Major)
                     }),
                     req,
                     current.as_ref(),
                     supported,
                 )
             };
-            let latest = latest_for(strategy, supported_toolchain_version.as_ref());
+            let latest = latest_for(strategy, supported_toolchain_version);
 
-            if let Some(supported_toolchain_version) = supported_toolchain_version.as_ref()
+            if let Some(supported_toolchain_version) = supported_toolchain_version
                 && !strategy.ignore_toolchain_version
             {
                 let ignored_strategy = VersionStrategy {
-                    compatible: strategy.compatible,
-                    pre: strategy.pre,
                     ignore_toolchain_version: true,
+                    ..*strategy
                 };
                 let unrestricted = latest_for(&ignored_strategy, None);
 
@@ -120,21 +137,14 @@ pub fn resolve_updates<'a>(
                 continue;
             }
 
-            let bump = current
-                .as_ref()
-                .map(|cur| version_bump(cur, latest))
-                .unwrap_or(VersionBump::Major);
-
-            let yanked = current
-                .as_ref()
-                .is_some_and(|version| package.is_version_yanked(version));
-
             result.entry(unit).or_default().push(Update {
                 name,
                 current_req: req,
                 new_req,
-                bump,
-                yanked,
+                bump: bump_for(latest),
+                yanked: current
+                    .as_ref()
+                    .is_some_and(|version| package.is_version_yanked(version)),
                 usage,
                 package,
             });
@@ -142,7 +152,7 @@ pub fn resolve_updates<'a>(
     }
 
     for unit_updates in result.values_mut() {
-        unit_updates.sort_unstable_by_key(|u| u.name);
+        unit_updates.sort_unstable_by_key(|u| (kind_label(u), u.name));
     }
 
     result
@@ -153,18 +163,13 @@ pub(crate) fn unit_matches_filter(unit: &Unit, filter: &str) -> bool {
         Unit::Project { name, .. } => filter == name,
         Unit::Workspace { manifest } => {
             filter == "workspace"
-                || workspace_root_name(manifest).is_some_and(|name| name == filter)
+                || manifest
+                    .parent()
+                    .and_then(|path| path.file_name())
+                    .is_some_and(|name| name == filter)
         }
         Unit::Global => filter == "global",
     }
-}
-
-fn workspace_root_name(manifest: &Path) -> Option<String> {
-    manifest
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .map(ToString::to_string)
 }
 
 /// Format a single update as an aligned, colored line.
@@ -173,14 +178,14 @@ pub fn format_update_line(
     name_width: usize,
     cur_width: usize,
     new_width: usize,
+    stream: Stream,
 ) -> String {
     let mut line = String::new();
-    let f = &mut line;
 
     let plain_display_name = display_name(update);
     let label = kind_label(update);
     let link_text = plain_display_name
-        .strip_suffix(label.as_str())
+        .strip_suffix(label)
         .unwrap_or(&plain_display_name);
     let name_display = update
         .package
@@ -190,45 +195,43 @@ pub fn format_update_line(
         .filter(|url| !url.chars().any(char::is_control))
         .map(|url| hyperlink(&url, link_text))
         .unwrap_or_else(|| link_text.to_string());
-    let name_display = format!("{name_display}{}", Style::new().dim().apply_to(&label));
+    let name_display = format!(
+        "{name_display}{}",
+        label.if_supports_color(stream, |text| text.dimmed())
+    );
 
     // Pad manually since hyperlink escape codes don't count as visible width
     let padding = name_width.saturating_sub(plain_display_name.len());
-    let _ = write!(f, " {}{:>padding$}", name_display, "");
+    let _ = write!(line, " {}{:>padding$}", name_display, "");
 
     let cur_req_str = display_requirement(update, update.current_req);
     let cur_display_len = cur_req_str.len() + if update.yanked { 9 } else { 0 };
     let cur_padding = cur_width.saturating_sub(cur_display_len);
 
+    let _ = write!(
+        line,
+        "  {:>cur_padding$}{}",
+        "",
+        cur_req_str.if_supports_color(stream, |text| text.white())
+    );
     if update.yanked {
         let _ = write!(
-            f,
-            "  {:>cur_padding$}{} {}",
-            "",
-            Style::new().white().apply_to(&cur_req_str),
-            Style::new().yellow().apply_to("(yanked)")
-        );
-    } else {
-        let _ = write!(
-            f,
-            "  {:>cur_padding$}{}",
-            "",
-            Style::new().white().apply_to(&cur_req_str)
+            line,
+            " {}",
+            "(yanked)".if_supports_color(stream, |text| text.yellow())
         );
     }
 
-    let _ = write!(f, "  →  ");
-
     let new_req_str = display_requirement(update, &update.new_req);
-    let colorized = colorize_req(&cur_req_str, &new_req_str, update.bump);
+    let colorized = colorize_req(&cur_req_str, &new_req_str, update.bump, stream);
 
     let new_padding = new_width.saturating_sub(new_req_str.len());
-    let _ = write!(f, "{:>new_padding$}{}", "", colorized);
+    let _ = write!(line, "  →  {:>new_padding$}{}", "", colorized);
 
     line
 }
 
-pub fn summary_groups(updates: &BTreeMap<&Unit, Vec<Update<'_>>>, mixed: bool) -> Vec<UpdateGroup> {
+pub fn summary_groups(updates: &Updates<'_>, mixed: bool) -> Vec<UpdateGroup> {
     updates
         .iter()
         .map(|(unit, unit_updates)| {
@@ -252,7 +255,7 @@ pub fn summary_groups(updates: &BTreeMap<&Unit, Vec<Update<'_>>>, mixed: bool) -
                 name: group_name(unit, mixed),
                 updates: unit_updates
                     .iter()
-                    .map(|update| format_update_line(update, name_w, cur_w, new_w))
+                    .map(|update| format_update_line(update, name_w, cur_w, new_w, Stream::Stdout))
                     .collect(),
             }
         })
@@ -260,46 +263,27 @@ pub fn summary_groups(updates: &BTreeMap<&Unit, Vec<Update<'_>>>, mixed: bool) -
 }
 
 fn group_name(unit: &Unit, mixed: bool) -> String {
-    if unit
+    let npm = unit
         .path()
-        .is_some_and(|path| path.file_name().is_some_and(|name| name == "package.json"))
-    {
-        let name = display_text(&unit.name());
-        return if mixed {
-            match unit {
-                Unit::Workspace { .. } => {
-                    format!("{} (npm workspace)", name.trim_end_matches(" (workspace)"))
-                }
-                _ => format!("{name} (npm)"),
-            }
-        } else {
-            name
-        };
+        .is_some_and(|path| path.file_name().is_some_and(|name| name == "package.json"));
+    let name = display_text(&unit.name());
+    if !mixed {
+        return name;
     }
-    if mixed {
-        match unit {
-            Unit::Workspace { .. } => format!(
-                "{} (cargo workspace)",
-                unit.name().trim_end_matches(" (workspace)")
-            ),
-            _ => format!("{} (cargo)", unit.name()),
-        }
-    } else {
-        unit.name().to_string()
+    let backend = if npm { "npm" } else { "cargo" };
+    match unit {
+        Unit::Workspace { .. } => format!(
+            "{} ({backend} workspace)",
+            name.trim_end_matches(" (workspace)")
+        ),
+        _ => format!("{name} ({backend})"),
     }
 }
 
-pub fn selection_groups(
-    updates: &BTreeMap<&Unit, Vec<Update<'_>>>,
-    mixed: bool,
-) -> (Vec<UpdateGroup>, Vec<bool>) {
+pub fn selection_groups(updates: &Updates<'_>, mixed: bool) -> (Vec<UpdateGroup>, Vec<bool>) {
     let (name_w, cur_w, new_w) = updates.values().flatten().fold((0, 0, 0), |widths, u| {
         (
-            widths.0.max(if u.package.purl.package_type() == "npm" {
-                display_name(u).len()
-            } else {
-                u.name.len() + kind_label(u).len()
-            }),
+            widths.0.max(display_name(u).len()),
             widths
                 .1
                 .max(display_requirement(u, u.current_req).len() + if u.yanked { 9 } else { 0 }),
@@ -319,7 +303,7 @@ pub fn selection_groups(
             name: group_name(unit, mixed),
             updates: entries
                 .iter()
-                .map(|u| format_update_line(u, name_w, cur_w, new_w))
+                .map(|u| format_update_line(u, name_w, cur_w, new_w, Stream::Stderr))
                 .collect(),
         })
         .collect();
@@ -337,11 +321,11 @@ fn normalize_repo_url(url: &str) -> String {
     let url = url.strip_suffix(".git").unwrap_or(url);
 
     // Convert git@ to https://
-    if let Some(rest) = url.strip_prefix("git@") {
+    if let Some(rest) = url.strip_prefix("git@")
         // git@github.com:user/repo -> https://github.com/user/repo
-        if let Some((host, path)) = rest.split_once(':') {
-            return format!("https://{host}/{path}");
-        }
+        && let Some((host, path)) = rest.split_once(':')
+    {
+        return format!("https://{host}/{path}");
     }
 
     // Convert git:// to https://
@@ -350,8 +334,8 @@ fn normalize_repo_url(url: &str) -> String {
     }
 
     // Ensure https://
-    if url.starts_with("http://") {
-        return url.replacen("http://", "https://", 1);
+    if let Some(rest) = url.strip_prefix("http://") {
+        return format!("https://{rest}");
     }
 
     url.to_string()
@@ -360,13 +344,13 @@ fn normalize_repo_url(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use check_updates::{PackageVersion, Version};
+    use crate::{PackageVersion, Version};
 
-    fn resolved_requirement(
+    fn resolved_update(
         current: &str,
         versions: &[&str],
         include_breaking: bool,
-    ) -> Option<String> {
+    ) -> Option<(String, VersionBump)> {
         let unit = Unit::Global;
         let req = Requirement::from_cargo(current.parse().unwrap());
         let package = Package {
@@ -391,32 +375,76 @@ mod tests {
             homepage: None,
         };
         let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package)])]);
-        resolve_updates(
-            &packages,
-            &VersionStrategy::default(),
-            &[],
-            include_breaking,
-        )
-        .values()
-        .flatten()
-        .next()
-        .map(|update| update.new_req.to_string())
+        resolve_updates(&packages, &VersionStrategy::default(), include_breaking)
+            .values()
+            .flatten()
+            .next()
+            .map(|update| (update.new_req.to_string(), update.bump))
     }
 
     #[test]
     fn uses_latest_nonbreaking_version() {
         assert_eq!(
-            resolved_requirement("^1.2.0", &["1.4.0", "2.0.0"], false),
-            Some("^1.4.0".to_string())
+            resolved_update("^1.2.0", &["1.4.0", "2.0.0"], false),
+            Some(("^1.4.0".to_string(), VersionBump::Minor))
         );
         assert_eq!(
-            resolved_requirement("^1.2.0", &["1.4.0", "2.0.0"], true),
-            Some("^2.0.0".to_string())
+            resolved_update("^1.2.0", &["1.4.0", "2.0.0"], true),
+            Some(("^2.0.0".to_string(), VersionBump::Major))
         );
-        assert_eq!(resolved_requirement("^1.2.0", &["2.0.0"], false), None);
+        assert_eq!(resolved_update("^1.2.0", &["2.0.0"], false), None);
+        assert_eq!(resolved_update("^1.2.0", &["1.0.0", "2.0.0"], false), None);
+    }
+
+    #[test]
+    fn never_offers_downgrades() {
+        for include_breaking in [false, true] {
+            for (current, versions) in [
+                ("^1.5.0", &["1.4.0"][..]),
+                ("^2.0", &["1.9.0"][..]),
+                ("^1.5.0-beta.2", &["1.5.0-beta.1"][..]),
+                ("1.*", &["0.9.0"][..]),
+            ] {
+                assert_eq!(
+                    resolved_update(current, versions, include_breaking),
+                    None,
+                    "{current}, include_breaking={include_breaking}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn compatible_wildcards_are_nonbreaking() {
+        for include_breaking in [false, true] {
+            for (current, latest, expected, bump) in [
+                ("1.*", "1.4.0", "^1.4", VersionBump::Minor),
+                ("1.2.*", "1.2.5", "^1.2.5", VersionBump::Patch),
+                ("0.*", "0.4.0", "^0.4", VersionBump::Patch),
+            ] {
+                assert_eq!(
+                    resolved_update(current, &[latest], include_breaking),
+                    Some((expected.to_string(), bump)),
+                    "{current}"
+                );
+            }
+        }
+        assert_eq!(resolved_update("1.*", &["2.0.0"], false), None);
         assert_eq!(
-            resolved_requirement("^1.2.0", &["1.0.0", "2.0.0"], false),
-            None
+            resolved_update("1.*", &["2.0.0"], true),
+            Some(("^2.0".to_string(), VersionBump::Major))
+        );
+    }
+
+    #[test]
+    fn partial_requirements_are_nonbreaking() {
+        assert_eq!(
+            resolved_update("^1.53", &["1.54.0", "2.0.0"], false),
+            Some(("^1.54".to_string(), VersionBump::Minor))
+        );
+        assert_eq!(
+            resolved_update("^1.53", &["1.54.0", "2.0.0"], true),
+            Some(("^2.0".to_string(), VersionBump::Major))
         );
     }
 
@@ -451,17 +479,89 @@ mod tests {
             ],
         )]);
 
-        let updates = resolve_updates(&packages, &VersionStrategy::default(), &[], false);
+        let updates = resolve_updates(&packages, &VersionStrategy::default(), false);
         let mut names: Vec<_> = updates[&unit].iter().map(display_name).collect();
         names.sort();
         assert_eq!(names, ["example (dev)", "example (peer)"]);
     }
 
     #[test]
+    fn sorts_updates_by_kind_then_name() {
+        let unit = Unit::Global;
+        let req = Requirement::from_cargo("^1.0.0".parse().unwrap());
+        let mut entries = Vec::new();
+        for kind in [
+            DepKind::Peer,
+            DepKind::Dev,
+            DepKind::Normal,
+            DepKind::Optional,
+            DepKind::Build,
+        ] {
+            for name in ["zulu", "alpha"] {
+                let package = Package {
+                    purl: format!("pkg:cargo/{name}").parse().unwrap(),
+                    usages: vec![Usage {
+                        unit: unit.clone(),
+                        req: req.clone(),
+                        kind,
+                        rename: None,
+                        supported_toolchain_version: None,
+                    }],
+                    versions: vec![PackageVersion {
+                        version: Version::parse("1.1.0").unwrap(),
+                        yanked: false,
+                        features: Default::default(),
+                        required_toolchain_version: None,
+                    }],
+                    repository: None,
+                    homepage: None,
+                };
+                entries.push((req.clone(), kind, package));
+            }
+        }
+        let packages = Packages::from([(unit.clone(), entries)]);
+
+        let updates = resolve_updates(&packages, &VersionStrategy::default(), false);
+        let names: Vec<_> = updates[&unit].iter().map(display_name).collect();
+
+        assert_eq!(
+            names,
+            [
+                "alpha",
+                "zulu",
+                "alpha (build)",
+                "zulu (build)",
+                "alpha (dev)",
+                "zulu (dev)",
+                "alpha (optional)",
+                "zulu (optional)",
+                "alpha (peer)",
+                "zulu (peer)",
+            ]
+        );
+    }
+
+    #[test]
     fn pre_one_patch_is_nonbreaking() {
         assert_eq!(
-            resolved_requirement("^0.1.0", &["0.1.5", "0.2.0"], false),
-            Some("^0.1.5".to_string())
+            resolved_update("^0.1.0", &["0.1.5", "0.2.0"], false),
+            Some(("^0.1.5".to_string(), VersionBump::Patch))
+        );
+        assert_eq!(
+            resolved_update("^0.0.1", &["0.0.2"], false),
+            Some(("^0.0.2".to_string(), VersionBump::Patch))
+        );
+    }
+
+    #[test]
+    fn prerelease_updates_stay_breaking() {
+        assert_eq!(
+            resolved_update("^1.0.0-beta.1", &["1.0.0-beta.2"], false),
+            None
+        );
+        assert_eq!(
+            resolved_update("^1.0.0-beta.1", &["1.0.0-beta.2"], true),
+            Some(("^1.0.0-beta.2".to_string(), VersionBump::Major))
         );
     }
 
@@ -504,42 +604,33 @@ mod tests {
     }
 
     #[test]
-    fn normalize_git_ssh() {
-        assert_eq!(
-            normalize_repo_url("git@github.com:user/repo"),
-            "https://github.com/user/repo"
-        );
+    fn normalizes_repo_urls() {
+        for url in [
+            "git@github.com:user/repo",
+            "git://github.com/user/repo",
+            "https://github.com/user/repo.git",
+            "http://github.com/user/repo",
+            "https://github.com/user/repo",
+        ] {
+            assert_eq!(
+                normalize_repo_url(url),
+                "https://github.com/user/repo",
+                "{url}"
+            );
+        }
     }
 
     #[test]
-    fn normalize_git_protocol() {
-        assert_eq!(
-            normalize_repo_url("git://github.com/user/repo"),
-            "https://github.com/user/repo"
-        );
-    }
-
-    #[test]
-    fn normalize_strip_git_suffix() {
-        assert_eq!(
-            normalize_repo_url("https://github.com/user/repo.git"),
-            "https://github.com/user/repo"
-        );
-    }
-
-    #[test]
-    fn normalize_http_to_https() {
-        assert_eq!(
-            normalize_repo_url("http://github.com/user/repo"),
-            "https://github.com/user/repo"
-        );
-    }
-
-    #[test]
-    fn normalize_https_unchanged() {
-        assert_eq!(
-            normalize_repo_url("https://github.com/user/repo"),
-            "https://github.com/user/repo"
-        );
+    fn escapes_group_names() {
+        for manifest in ["Cargo.toml", "package.json"] {
+            let unit = Unit::Workspace {
+                manifest: format!("unsafe\x1b[2J/{manifest}").into(),
+            };
+            for mixed in [false, true] {
+                let name = group_name(&unit, mixed);
+                assert!(!name.chars().any(char::is_control), "{name:?}");
+                assert!(name.contains("\\u{1b}[2J"));
+            }
+        }
     }
 }
