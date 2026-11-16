@@ -2,12 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{DepKind, Package, PackageVersion, Packages, Purl, Requirement, Unit, Usage, Version};
 
 mod cli;
 mod manifest;
+mod npmrc;
 mod pm;
 mod project;
 mod update;
@@ -24,7 +26,10 @@ pub(crate) struct NpmBackend;
 #[derive(Debug, Default)]
 pub struct NpmOptions<'a> {
     pub packages: &'a [String],
-
+    /// Override the minimum publication age inherited from package-manager configuration.
+    pub min_publish_age: Option<Duration>,
+    /// Ignore publication-age settings, including an explicit minimum.
+    pub ignore_publish_age: bool,
 }
 
 /// Discovered npm projects and their package versions.
@@ -48,6 +53,17 @@ struct Project {
     dependencies: Vec<Dependency>,
 }
 
+#[derive(Deserialize)]
+struct RegistryMetadata {
+    versions: BTreeMap<String, RegistryVersion>,
+    time: Option<BTreeMap<String, Value>>,
+}
+
+#[derive(Deserialize)]
+struct RegistryVersion {
+    deprecated: Option<Value>,
+}
+
 /// Discover direct npm dependencies and their published versions without modifying project files.
 pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackages, String> {
     let project_root = project::root(root)?.ok_or_else(|| {
@@ -57,6 +73,26 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
         )
     })?;
     let root = project_root.as_path();
+    // Manifest-only checks also work for unsupported or ambiguous package managers.
+    let publish_age = match package_manager(root) {
+        Ok(manager) => pm::publish_age(
+            root,
+            manager,
+            options.min_publish_age,
+            options.ignore_publish_age,
+            &crate::config::ConfigEnv::current(),
+        ),
+        Err(error) => {
+            if !options.ignore_publish_age && options.min_publish_age != Some(Duration::ZERO) {
+                log::warn!("cannot load inherited publication-age settings: {error}");
+            }
+            crate::publish_age::PublishAge::new(if options.ignore_publish_age {
+                None
+            } else {
+                options.min_publish_age
+            })
+        }
+    };
     let root_path = root.join("package.json");
     let root_manifest = PackageJson::from_path(&root_path)?;
     let workspace = PnpmWorkspace::from_root(root)?;
@@ -181,6 +217,7 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
     let mut tasks = tokio::task::JoinSet::new();
     for name in names {
         let client = client.clone();
+        let publish_age = publish_age.clone();
         let mut url = registry.clone();
         let permit = semaphore
             .clone()
@@ -195,7 +232,7 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                 .push(&name);
             let mut response = client
                 .get(url.clone())
-                .header("Accept", "application/vnd.npm.install-v1+json")
+                .header("Accept", "application/json")
                 .send()
                 .await
                 .map_err(|error| error.to_string())?;
@@ -206,7 +243,7 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                 tokio::time::sleep(Duration::from_millis(500 * (1 << attempt))).await;
                 response = client
                     .get(url.clone())
-                    .header("Accept", "application/vnd.npm.install-v1+json")
+                    .header("Accept", "application/json")
                     .send()
                     .await
                     .map_err(|error| error.to_string())?;
@@ -226,14 +263,11 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            let body: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-            let available = body["versions"]
-                .as_object()
-                .ok_or_else(|| format!("missing versions for {name}"))?
-                .iter()
-                .filter(|(_, data)| data.get("deprecated").is_none())
-                .filter_map(|(version, _)| Version::parse(version).ok())
-                .collect::<Vec<_>>();
+            // Full metadata can contain tens of MiB of unused readmes and manifests.
+            // Deserialize only the fields needed to select versions.
+            let body: RegistryMetadata = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("invalid registry metadata for {name}: {error}"))?;
+            let available = available_versions(&name, &body, &publish_age);
             Ok::<_, String>((name, available))
         });
     }
@@ -279,14 +313,8 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                 usages: vec![usage],
                 versions: available
                     .iter()
-                    .filter(|version| *version > &current)
+                    .filter(|entry| entry.version > current)
                     .cloned()
-                    .map(|version| PackageVersion {
-                        version,
-                        yanked: false,
-                        features: Default::default(),
-                        required_toolchain_version: None,
-                    })
                     .collect(),
                 repository: None,
                 homepage: None,
@@ -301,4 +329,72 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
         projects: project_names,
         packages,
     })
+}
+
+fn available_versions(
+    name: &str,
+    body: &RegistryMetadata,
+    age: &crate::publish_age::PublishAge,
+) -> Vec<PackageVersion> {
+    body.versions
+        .iter()
+        .filter(|(_, data)| data.deprecated.is_none())
+        .filter_map(|(version, _)| {
+            let published = body
+                .time
+                .as_ref()
+                .and_then(|time| time.get(version))
+                .and_then(Value::as_str);
+            if !age.allows(name, version, published) {
+                return None;
+            }
+            Some(PackageVersion {
+                version: Version::parse(version).ok()?,
+                published_at: published.and_then(|value| value.parse().ok()),
+                yanked: false,
+                features: Default::default(),
+                required_toolchain_version: None,
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::publish_age::PublishAge;
+
+    #[test]
+    fn skips_recent_versions_and_keeps_older_updates() {
+        let body = serde_json::from_value(serde_json::json!({
+            "versions": {"1.0.0": {}, "1.1.0": {}, "1.2.0": {}, "1.3.0": {"deprecated": "bad"}},
+            "time": {"1.0.0": "2000-01-01T00:00:00Z", "1.1.0": "2001-01-01T00:00:00Z", "1.2.0": "2099-01-01T00:00:00Z", "1.3.0": "2001-01-01T00:00:00Z"}
+        })).unwrap();
+        let mut age = PublishAge::new(Some(Duration::from_secs(86400)));
+        let versions = available_versions("real-package", &body, &age);
+        assert_eq!(
+            versions
+                .iter()
+                .map(|entry| &entry.version)
+                .max()
+                .unwrap()
+                .to_string(),
+            "1.1.0"
+        );
+        assert!(versions.iter().all(|entry| entry.published_at.is_some()));
+        age.excludes = vec!["real-package".into()];
+        assert_eq!(
+            available_versions("real-package", &body, &age)
+                .iter()
+                .map(|entry| &entry.version)
+                .max()
+                .unwrap()
+                .to_string(),
+            "1.2.0"
+        );
+        assert_eq!(
+            available_versions("real-package", &body, &PublishAge::default()).len(),
+            3
+        );
+    }
 }

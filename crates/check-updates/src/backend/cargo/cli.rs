@@ -25,6 +25,8 @@ impl CargoBackend {
                 RegistryCacheMode::Refresh => RegistryCachePolicy::Refresh,
                 RegistryCacheMode::NoCache => RegistryCachePolicy::NoCache,
             },
+            min_publish_age: args.min_publish_age,
+            ignore_publish_age: args.ignore_publish_age,
         };
         let checker = CheckUpdates::with_options(Some(start), options);
         let (root, mut packages) = checker
@@ -72,6 +74,48 @@ impl BackendImpl for CargoBackend {
         if args.ignore_toolchain_version {
             command.arg("--ignore-rust-version");
         }
+        command.args(super::config::overrides(
+            args.min_publish_age,
+            args.ignore_publish_age,
+        ));
         Ok(command)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn forwards_publish_age_overrides() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = CheckUpdates::new(Some(dir.path().to_path_buf())).cargo;
+        for (flags, behavior, seconds) in [
+            (&["--min-publish-age", "1d"][..], "deny", 86400),
+            (&["--min-publish-age", "0"][..], "deny", 0),
+            (
+                &["--min-publish-age", "1d", "--ignore-publish-age"][..],
+                "allow",
+                0,
+            ),
+        ] {
+            let args = crate::cli::args().run_inner(flags).unwrap();
+            let command = backend.upgrade_command(dir.path(), &args).unwrap();
+            assert_eq!(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                [
+                    "update".to_string(),
+                    "--config".into(),
+                    format!("resolver.incompatible-publish-age=\"{behavior}\""),
+                    "--config".into(),
+                    format!("registry.global-min-publish-age=\"{seconds} seconds\""),
+                    "--config".into(),
+                    format!("registries.crates-io.min-publish-age=\"{seconds} seconds\""),
+                ]
+            );
+        }
     }
 }

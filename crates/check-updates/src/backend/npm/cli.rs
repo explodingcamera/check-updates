@@ -23,6 +23,8 @@ impl NpmBackend {
             root,
             &NpmOptions {
                 packages: &args.package,
+                min_publish_age: args.min_publish_age,
+                ignore_publish_age: args.ignore_publish_age,
             },
         )
         .await?;
@@ -55,21 +57,27 @@ mod tests {
     #[test]
     fn upgrade_commands() {
         let dir = tempfile::tempdir().unwrap();
-        for (manager, args, lockfile_arg) in [
+        for (manager, args, lockfile_arg, age_args, zero_args) in [
             (
                 "npm",
                 &["update", "--ignore-scripts"][..],
                 "--package-lock-only",
+                &["--min-release-age=1"][..],
+                &["--min-release-age=0"][..],
             ),
             (
                 "pnpm",
                 &["update", "--no-save", "--ignore-scripts"][..],
                 "--lockfile-only",
+                &["--minimum-release-age=1440"][..],
+                &["--minimum-release-age=0"][..],
             ),
             (
                 "bun",
                 &["install", "--ignore-scripts"][..],
                 "--lockfile-only",
+                &["--minimum-release-age", "86400"][..],
+                &["--minimum-release-age", "0"][..],
             ),
         ] {
             std::fs::write(
@@ -78,16 +86,27 @@ mod tests {
             )
             .unwrap();
             for lockfile_only in [false, true] {
-                let mut options = crate::cli::args().run_inner(&[]).unwrap();
-                options.lockfile_only = lockfile_only;
-                let command = NpmBackend.upgrade_command(dir.path(), &options).unwrap();
-                let mut expected = args.to_vec();
-                if lockfile_only {
-                    expected.push(lockfile_arg);
+                for (flags, extra) in [
+                    (&[][..], &[][..]),
+                    (&["--min-publish-age", "1d"][..], age_args),
+                    (&["--min-publish-age", "0"][..], zero_args),
+                    (
+                        &["--min-publish-age", "1d", "--ignore-publish-age"][..],
+                        zero_args,
+                    ),
+                ] {
+                    let mut options = crate::cli::args().run_inner(flags).unwrap();
+                    options.lockfile_only = lockfile_only;
+                    let command = NpmBackend.upgrade_command(dir.path(), &options).unwrap();
+                    let mut expected = args.to_vec();
+                    if lockfile_only {
+                        expected.push(lockfile_arg);
+                    }
+                    expected.extend_from_slice(extra);
+                    assert_eq!(command.get_program(), manager);
+                    assert_eq!(command.get_current_dir(), Some(dir.path()));
+                    assert_eq!(command.get_args().collect::<Vec<_>>(), expected);
                 }
-                assert_eq!(command.get_program(), manager);
-                assert_eq!(command.get_current_dir(), Some(dir.path()));
-                assert_eq!(command.get_args().collect::<Vec<_>>(), expected);
             }
         }
     }

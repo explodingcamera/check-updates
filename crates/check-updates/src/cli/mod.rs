@@ -54,6 +54,13 @@ pub struct Args {
     /// Include pre-release/alpha/beta versions
     pub pre: bool,
 
+    /// Minimum publication age, such as 7d or '12 hours' (0 disables)
+    #[bpaf(argument::<String>("AGE"), parse(|value| crate::publish_age::parse_duration(&value)), optional)]
+    pub min_publish_age: Option<std::time::Duration>,
+
+    /// Ignore publication-age settings from configuration and --min-publish-age
+    pub ignore_publish_age: bool,
+
     /// Ignore package toolchain version requirements
     #[bpaf(long, long("ignore-rust-version"))]
     pub ignore_toolchain_version: bool,

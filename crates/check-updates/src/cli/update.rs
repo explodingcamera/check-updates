@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use jiff::Timestamp;
+
 use crate::{DepKind, Package, Packages, Requirement, Unit, Usage, VersionStrategy};
 use owo_colors::{OwoColorize, Stream};
 
 use super::interactive::{UpdateGroup, display_text};
-use super::version::{VersionBump, colorize_req, version_bump};
+use super::version::{VersionBump, colorize_req, format_publish_age, version_bump};
 
 pub struct Update<'a> {
     pub name: &'a str,
@@ -13,6 +15,7 @@ pub struct Update<'a> {
     pub new_req: Requirement,
     pub bump: VersionBump,
     pub yanked: bool,
+    pub published_at: Option<Timestamp>,
     pub usage: &'a Usage,
     pub package: &'a Package,
 }
@@ -145,6 +148,11 @@ pub fn resolve_updates<'a>(
                 yanked: current
                     .as_ref()
                     .is_some_and(|version| package.is_version_yanked(version)),
+                published_at: package
+                    .versions
+                    .iter()
+                    .find(|entry| &entry.version == latest)
+                    .and_then(|entry| entry.published_at),
                 usage,
                 package,
             });
@@ -227,6 +235,13 @@ pub fn format_update_line(
 
     let new_padding = new_width.saturating_sub(new_req_str.len());
     let _ = write!(line, "  →  {:>new_padding$}{}", "", colorized);
+    if let Some(badge) = update
+        .published_at
+        .map(|published| Timestamp::now().duration_since(published))
+        .and_then(|age| format_publish_age(age, stream))
+    {
+        let _ = write!(line, " {badge}");
+    }
 
     line
 }
@@ -365,6 +380,7 @@ mod tests {
             versions: versions
                 .iter()
                 .map(|version| PackageVersion {
+                    published_at: None,
                     version: Version::parse(version).unwrap(),
                     yanked: false,
                     features: Default::default(),
@@ -394,6 +410,42 @@ mod tests {
         );
         assert_eq!(resolved_update("^1.2.0", &["2.0.0"], false), None);
         assert_eq!(resolved_update("^1.2.0", &["1.0.0", "2.0.0"], false), None);
+    }
+
+    #[test]
+    fn shows_the_selected_versions_age() {
+        let unit = Unit::Global;
+        let req = Requirement::from_cargo("^1.0.0".parse().unwrap());
+        let now = Timestamp::now();
+        let package = Package {
+            purl: "pkg:cargo/example".parse().unwrap(),
+            usages: vec![Usage {
+                unit: unit.clone(),
+                req: req.clone(),
+                kind: DepKind::Normal,
+                rename: None,
+                supported_toolchain_version: None,
+            }],
+            versions: [("1.1.0", 29), ("2.0.0", 96)]
+                .map(|(version, hours)| PackageVersion {
+                    version: Version::parse(version).unwrap(),
+                    published_at: Some(now - jiff::SignedDuration::from_hours(hours)),
+                    yanked: false,
+                    features: Default::default(),
+                    required_toolchain_version: None,
+                })
+                .into(),
+            repository: None,
+            homepage: None,
+        };
+        let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package)])]);
+        let updates = resolve_updates(&packages, &VersionStrategy::default(), false);
+        for groups in [
+            summary_groups(&updates, false),
+            selection_groups(&updates, false).0,
+        ] {
+            assert!(groups[0].updates[0].contains("[1d5h]"));
+        }
     }
 
     #[test]
@@ -463,6 +515,7 @@ mod tests {
             purl: "pkg:cargo/example".parse().unwrap(),
             usages: vec![usage(DepKind::Peer), usage(DepKind::Dev)],
             versions: vec![PackageVersion {
+                published_at: None,
                 version: Version::parse("1.1.0").unwrap(),
                 yanked: false,
                 features: Default::default(),
@@ -508,6 +561,7 @@ mod tests {
                         supported_toolchain_version: None,
                     }],
                     versions: vec![PackageVersion {
+                        published_at: None,
                         version: Version::parse("1.1.0").unwrap(),
                         yanked: false,
                         features: Default::default(),
@@ -591,6 +645,7 @@ mod tests {
                 new_req: Requirement::from_cargo("^2.0.0".parse().unwrap()),
                 bump,
                 yanked: false,
+                published_at: None,
                 usage: &usage,
                 package: &package,
             })

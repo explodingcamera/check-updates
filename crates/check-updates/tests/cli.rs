@@ -70,3 +70,38 @@ fn generates_shell_completions() {
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("--lockfile-only"));
 }
+
+#[test]
+fn resolves_config_paths_from_explicit_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("project");
+    let caller = dir.path().join("caller");
+    std::fs::create_dir_all(root.join("config")).unwrap();
+    std::fs::create_dir(&caller).unwrap();
+    std::fs::write(root.join("package.json"), r#"{"name":"app"}"#).unwrap();
+    std::fs::write(root.join("config/user.npmrc"), "min-release-age=invalid\n").unwrap();
+    for flags in [
+        &[][..],
+        &["--min-publish-age", "0"][..],
+        &["--ignore-publish-age"][..],
+    ] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_check-updates"));
+        command
+            .arg("--root")
+            .arg(&root)
+            .args(flags)
+            .current_dir(&caller)
+            .env("NPM_CONFIG_USERCONFIG", "config/user.npmrc")
+            .env_remove("npm_config_userconfig");
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).contains("min-release-age"),
+            flags.is_empty()
+        );
+    }
+}

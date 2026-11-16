@@ -48,13 +48,19 @@ pub(super) fn workspace_members(
         .collect()
 }
 
-pub(super) fn versions_from_krate(krate: &IndexKrate) -> Vec<PackageVersion> {
+pub(super) fn versions_from_krate(
+    krate: &IndexKrate,
+    age: &crate::publish_age::PublishAge,
+) -> Vec<PackageVersion> {
     krate
         .versions
         .iter()
+        // Keep yanked entries for current-version warnings. The selector never recommends them.
+        .filter(|v| v.is_yanked() || age.allows(krate.name(), &v.version, v.pubtime.as_deref()))
         .filter_map(|v| {
             Some(PackageVersion {
                 version: Version::parse(&v.version).ok()?,
+                published_at: v.pubtime.as_deref().and_then(|value| value.parse().ok()),
                 yanked: v.is_yanked(),
                 features: v
                     .features()
@@ -259,4 +265,45 @@ pub(super) fn build_packages(
     }
 
     packages.into_values().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::publish_age::PublishAge;
+    use std::time::Duration;
+
+    #[test]
+    fn filters_index_publication_times() {
+        let lines = [
+            ("1.0.0", None, false),
+            ("1.1.0", Some("2000-01-01T00:00:00Z"), false),
+            ("1.2.0", Some("2099-01-01T00:00:00Z"), false),
+            ("1.3.0", Some("2099-01-01T00:00:00Z"), true),
+        ]
+        .map(|(version, time, yanked)| {
+            let mut entry = serde_json::json!({
+                "name": "example", "vers": version, "deps": [],
+                "cksum": "0000000000000000000000000000000000000000000000000000000000000000",
+                "features": {}, "yanked": yanked
+            });
+            if let Some(time) = time {
+                entry["pubtime"] = time.into();
+            }
+            entry.to_string()
+        })
+        .join("\n");
+        let krate = IndexKrate::from_slice(lines.as_bytes()).unwrap();
+        let versions =
+            versions_from_krate(&krate, &PublishAge::new(Some(Duration::from_secs(86400))));
+        assert_eq!(
+            versions
+                .iter()
+                .map(|entry| entry.version.to_string())
+                .collect::<Vec<_>>(),
+            ["1.0.0", "1.1.0", "1.3.0"]
+        );
+        assert!(versions.last().unwrap().yanked);
+        assert_eq!(versions_from_krate(&krate, &PublishAge::default()).len(), 4);
+    }
 }

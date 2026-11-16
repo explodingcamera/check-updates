@@ -201,6 +201,8 @@ pub type Packages = HashMap<Unit, Vec<(Requirement, DepKind, Package)>>;
 #[derive(Debug, Clone)]
 pub struct PackageVersion {
     pub version: Version,
+    /// Publication time reported by the registry, if known.
+    pub published_at: Option<jiff::Timestamp>,
     pub yanked: bool,
     pub features: HashMap<String, Vec<String>>,
     pub required_toolchain_version: Option<Version>,
@@ -245,6 +247,7 @@ mod tests {
             versions: ["1.0.0", "3.0.0-alpha.1", "4.0.0", "1.5.0", "2.0.0"]
                 .into_iter()
                 .map(|version| PackageVersion {
+                    published_at: None,
                     version: Version::parse(version).unwrap(),
                     yanked: version == "4.0.0",
                     features: HashMap::new(),
@@ -310,6 +313,7 @@ mod tests {
         let versions: Vec<_> = ["1.0.0-alpha.1", "1.0.0-alpha.2", "1.0.1-alpha.1"]
             .into_iter()
             .map(|version| PackageVersion {
+                published_at: None,
                 version: Version::parse(version).unwrap(),
                 yanked: false,
                 features: Default::default(),

@@ -45,11 +45,12 @@ disponent.workspace = true
 glob.workspace = true
 granit-parser.workspace = true
 http.workspace = true
+jiff.workspace = true
 log.workspace = true
 nodejs-semver.workspace = true
 owo-colors.workspace = true
 purl.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["gzip"] }
 semver.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

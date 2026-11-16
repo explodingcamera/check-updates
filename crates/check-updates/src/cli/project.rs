@@ -110,6 +110,7 @@ mod tests {
                     supported_toolchain_version: None,
                 }],
                 versions: vec![PackageVersion {
+                    published_at: None,
                     version: Version::parse("1.1.0").unwrap(),
                     yanked: false,
                     features: Default::default(),

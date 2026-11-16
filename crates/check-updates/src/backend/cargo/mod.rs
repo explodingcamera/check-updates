@@ -14,6 +14,7 @@ use crate::{
 };
 
 mod cli;
+mod config;
 mod fetch;
 mod resolve;
 mod update;
@@ -23,6 +24,8 @@ use update::*;
 
 #[derive(Debug, Error)]
 pub enum CargoError {
+    #[error("invalid publish-age configuration: {0}")]
+    Configuration(String),
     #[error("failed to get cargo metadata: {0}")]
     Metadata(String),
     #[error("failed to access crates.io index: {0}")]
@@ -61,6 +64,10 @@ impl CargoBackend {
             if let Some(root) = self.state.root() {
                 cmd.current_dir(root);
             }
+            cmd.other_options(config::overrides(
+                self.state.options.min_publish_age,
+                self.state.options.ignore_publish_age,
+            ));
             cmd
         };
 
@@ -79,8 +86,14 @@ impl CargoBackend {
             "cargo.packages: cargo metadata resolution took {:?}",
             metadata_start.elapsed()
         );
-
         let root = metadata.workspace_root.as_std_path().to_path_buf();
+        let publish_age = config::load(
+            &root,
+            self.state.options.min_publish_age,
+            self.state.options.ignore_publish_age,
+            &crate::config::ConfigEnv::current(),
+        )
+        .map_err(CargoError::Configuration)?;
 
         let registry_start = Instant::now();
         let members = workspace_members(&metadata);
@@ -117,7 +130,7 @@ impl CargoBackend {
                     .and_then(|entry| entry.map(|entry| entry.deserialize()).transpose())
                 {
                     Ok(Some(krate)) => {
-                        versions.insert(name.clone(), versions_from_krate(&krate));
+                        versions.insert(name.clone(), versions_from_krate(&krate, &publish_age));
                         cache_hits += 1;
                         continue;
                     }
@@ -163,7 +176,7 @@ impl CargoBackend {
                     .and_then(|entry| entry.map(|entry| entry.deserialize()).transpose())
                 {
                     Ok(Some(krate)) => {
-                        versions.insert(name, versions_from_krate(&krate));
+                        versions.insert(name, versions_from_krate(&krate, &publish_age));
                     }
                     Ok(None) => {
                         log::debug!("no crate data returned for '{name}'");

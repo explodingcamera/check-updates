@@ -1,5 +1,38 @@
 use crate::Version;
+use jiff::SignedDuration;
 use owo_colors::{OwoColorize, Stream, Style};
+
+/// Format an age warning for a release published less than three days ago.
+pub(crate) fn format_publish_age(age: SignedDuration, stream: Stream) -> Option<String> {
+    let seconds = age.as_secs().max(0);
+    if seconds >= 3 * 86400 {
+        return None;
+    }
+    let (whole, remainder, unit, subunit) = if seconds >= 86400 {
+        (seconds / 86400, seconds % 86400 / 3600, "d", "h")
+    } else if seconds >= 3600 {
+        (seconds / 3600, seconds % 3600 / 60, "h", "m")
+    } else {
+        (seconds / 60, 0, "m", "")
+    };
+    let badge = if whole == 0 {
+        "[<1m]".to_string()
+    } else if remainder == 0 {
+        format!("[{whole}{unit}]")
+    } else {
+        format!("[{whole}{unit}{remainder}{subunit}]")
+    };
+    let style = if seconds < 86400 {
+        Style::new().red()
+    } else {
+        Style::new().yellow()
+    };
+    Some(
+        badge
+            .if_supports_color(stream, |text| text.style(style))
+            .to_string(),
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionBump {
@@ -92,6 +125,26 @@ pub fn colorize_req(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formats_recent_release_ages() {
+        for (seconds, expected) in [
+            (0, Some("[<1m]")),
+            (60, Some("[1m]")),
+            (3600, Some("[1h]")),
+            (86399, Some("[23h59m]")),
+            (86400, Some("[1d]")),
+            (29 * 3600, Some("[1d5h]")),
+            (3 * 86400 - 1, Some("[2d23h]")),
+            (3 * 86400, None),
+        ] {
+            let badge = format_publish_age(SignedDuration::from_secs(seconds), Stream::Stdout);
+            match expected {
+                Some(expected) => assert!(badge.unwrap().contains(expected)),
+                None => assert!(badge.is_none()),
+            }
+        }
+    }
 
     #[test]
     fn classifies_version_bumps() {

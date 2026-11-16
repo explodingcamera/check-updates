@@ -2,9 +2,16 @@ use std::path::Path;
 
 use granit_parser::{Event, Parser};
 
+/// Workspace members and publication-age settings from pnpm-workspace.yaml.
 #[derive(Default)]
 pub(in crate::backend::npm) struct PnpmWorkspace {
     pub packages: Vec<String>,
+    /// Native age value in minutes, possibly containing an environment reference.
+    pub minimum_release_age: Option<String>,
+    /// Package or exact-version exemptions, replacing lower-priority lists.
+    pub minimum_release_age_exclude: Option<Vec<String>>,
+    /// Whether undated versions bypass the age filter.
+    pub minimum_release_age_ignore_missing_time: Option<String>,
 }
 
 impl PnpmWorkspace {
@@ -17,7 +24,8 @@ impl PnpmWorkspace {
         Self::parse(&contents).map_err(|error| format!("pnpm-workspace.yaml: {error}"))
     }
 
-    fn parse(contents: &str) -> Result<Self, String> {
+    /// Read workspace patterns and age settings while skipping unrelated YAML values.
+    pub(in crate::backend::npm) fn parse(contents: &str) -> Result<Self, String> {
         let mut events = Parser::new_from_str(contents).filter_map(|result| match result {
             Ok((
                 Event::StreamStart
@@ -39,6 +47,7 @@ impl PnpmWorkspace {
             _ => return Err("expected a workspace mapping".into()),
         }
         let mut packages = None;
+        let mut settings = Self::default();
         while let Some(event) = events.next().transpose()? {
             let key = match event {
                 Event::Scalar(key, ..) => key,
@@ -48,6 +57,7 @@ impl PnpmWorkspace {
                     }
                     return Ok(Self {
                         packages: packages.unwrap_or_default(),
+                        ..settings
                     });
                 }
                 _ => return Err("expected a scalar workspace key".into()),
@@ -59,26 +69,44 @@ impl PnpmWorkspace {
                 .next()
                 .transpose()?
                 .ok_or("missing workspace value")?;
-            if key == "packages" {
-                if packages.is_some() {
-                    return Err("duplicate workspace packages field".into());
+            if key == "packages"
+                || (key == "minimumReleaseAgeExclude" && matches!(value, Event::SequenceStart(..)))
+            {
+                let field = if key == "packages" {
+                    &mut packages
+                } else {
+                    &mut settings.minimum_release_age_exclude
+                };
+                if field.is_some() && key == "packages" {
+                    return Err(format!("duplicate workspace {key} field"));
                 }
                 if !matches!(value, Event::SequenceStart(..)) {
-                    return Err(
-                        "workspace packages must be a sequence, not a scalar or alias".into(),
-                    );
+                    return Err(format!(
+                        "workspace {key} must be a sequence, not a scalar or alias"
+                    ));
                 }
                 let mut patterns = Vec::new();
+                let mut invalid = false;
+                let mut depth = 1;
                 loop {
                     match events.next().transpose()? {
                         Some(Event::Scalar(pattern, _, _, tag))
-                            if tag
-                                .as_ref()
-                                .is_none_or(|tag| tag.is_yaml_core_schema_tag("str")) =>
+                            if depth == 1
+                                && tag
+                                    .as_ref()
+                                    .is_none_or(|tag| tag.is_yaml_core_schema_tag("str")) =>
                         {
                             patterns.push(pattern.into_owned());
                         }
-                        Some(Event::SequenceEnd) => break,
+                        Some(Event::SequenceEnd) if depth == 1 => break,
+                        Some(event) if key != "packages" => {
+                            invalid = true;
+                            match event {
+                                Event::MappingStart(..) | Event::SequenceStart(..) => depth += 1,
+                                Event::MappingEnd | Event::SequenceEnd => depth -= 1,
+                                _ => {}
+                            }
+                        }
                         _ => {
                             return Err(
                                 "expected scalar workspace patterns, not collections or aliases"
@@ -87,8 +115,34 @@ impl PnpmWorkspace {
                         }
                     }
                 }
-                packages = Some(patterns);
+                if invalid {
+                    log::warn!(
+                        "ignoring invalid minimumReleaseAgeExclude, expected a list of strings"
+                    );
+                } else {
+                    *field = Some(patterns);
+                }
+            } else if (key == "minimumReleaseAge" || key == "minimumReleaseAgeIgnoreMissingTime")
+                && matches!(value, Event::Scalar(..))
+            {
+                let field = if key == "minimumReleaseAge" {
+                    &mut settings.minimum_release_age
+                } else {
+                    &mut settings.minimum_release_age_ignore_missing_time
+                };
+                let Event::Scalar(value, ..) = value else {
+                    return Err(format!("workspace {key} must be a scalar"));
+                };
+                *field = Some(value.into_owned());
             } else {
+                if matches!(
+                    key.as_ref(),
+                    "minimumReleaseAge"
+                        | "minimumReleaseAgeExclude"
+                        | "minimumReleaseAgeIgnoreMissingTime"
+                ) {
+                    log::warn!("ignoring invalid {key}");
+                }
                 // Ignore unrelated settings, including nested catalogs and overrides.
                 let mut depth = usize::from(matches!(
                     value,
@@ -119,6 +173,7 @@ mod tests {
             "# workspace\npackages: [\"packages/*\", '!packages/skip'] # members\n",
             "catalog:\n  packages: {nested: [ignored]}\npackages: [packages/*, '!packages/skip']\nsettings:\n  packages: [ignored]\n",
             "packages: &patterns [!!str packages/*, '!packages/skip']\nother: *patterns\n",
+            "packages: [packages/*, '!packages/skip']\nminimumReleaseAge: [invalid]\nminimumReleaseAgeExclude: [valid, {bad: value}]\n",
             "---\n'packages':\n  - \"packages\\u002f*\"\n  - '!packages/skip'\n...\n",
         ] {
             assert_eq!(

@@ -11,7 +11,9 @@ pub use cli::run;
 use crate::backend::{CargoBackend, RegistryError};
 
 mod backend;
+mod config;
 mod package;
+mod publish_age;
 mod requirement;
 
 pub use backend::npm;
@@ -35,13 +37,16 @@ pub enum RegistryCachePolicy {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Options {
     pub registry_cache_policy: RegistryCachePolicy,
-
+    /// Override the minimum publication age inherited from Cargo configuration.
+    pub min_publish_age: Option<Duration>,
+    /// Ignore publication-age settings, including an explicit minimum.
+    pub ignore_publish_age: bool,
 }
 
 pub struct State {
     client: Client,
     root: Option<PathBuf>,
-    registry_cache_policy: RegistryCachePolicy,
+    pub(crate) options: Options,
 }
 
 impl State {
@@ -62,7 +67,7 @@ impl State {
         Self {
             client,
             root,
-            registry_cache_policy: options.registry_cache_policy,
+            options,
         }
     }
 
@@ -75,7 +80,7 @@ impl State {
     }
 
     pub fn registry_cache_policy(&self) -> RegistryCachePolicy {
-        self.registry_cache_policy
+        self.options.registry_cache_policy
     }
 }
 
