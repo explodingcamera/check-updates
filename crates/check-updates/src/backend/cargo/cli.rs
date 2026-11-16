@@ -5,16 +5,18 @@ use crate::{CheckUpdates, Options, Package, RegistryCachePolicy, Requirement, Us
 
 use super::CargoBackend;
 use crate::backend::BackendImpl;
-use crate::{
-    cli::{Args, RegistryCacheMode},
-    cmd::project::Project,
-    update,
-};
+use crate::cli::{Args, RegistryCacheMode, project::Project, update};
 
 impl CargoBackend {
     /// Find and load a Cargo project.
     pub(crate) async fn discover(root: &Path, args: &Args) -> Result<Option<Project>, String> {
-        if !root.join("Cargo.toml").is_file() {
+        let start = root
+            .canonicalize()
+            .map_err(|error| format!("{}: {error}", root.display()))?;
+        if !start
+            .ancestors()
+            .any(|directory| directory.join("Cargo.toml").is_file())
+        {
             return Ok(None);
         }
         let options = Options {
@@ -24,9 +26,9 @@ impl CargoBackend {
                 RegistryCacheMode::NoCache => RegistryCachePolicy::NoCache,
             },
         };
-        let checker = CheckUpdates::with_options(Some(root.to_path_buf()), options);
-        let mut packages = checker
-            .packages()
+        let checker = CheckUpdates::with_options(Some(start), options);
+        let (root, mut packages) = checker
+            .packages_with_root()
             .await
             .map_err(|error| error.to_string())?;
         let names = args
@@ -47,7 +49,7 @@ impl CargoBackend {
             });
         }
         Ok(Some(Project {
-            root: root.to_path_buf(),
+            root,
             names,
             packages,
             backend: checker.cargo.into(),

@@ -2,6 +2,7 @@
 name = "check-updates"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 description = "Check and update Cargo and JavaScript dependencies"
 readme = "../../README.md"
 repository.workspace = true
@@ -37,11 +38,16 @@ name = "cargo-check-updates"
 path = "src/bin/cargo-check-updates.rs"
 
 [dependencies]
+bpaf.workspace = true
 cargo_metadata.workspace = true
+console = { workspace = true, features = ["std"] }
 disponent.workspace = true
+glob.workspace = true
+granit-parser.workspace = true
 http.workspace = true
 log.workspace = true
 nodejs-semver.workspace = true
+owo-colors.workspace = true
 purl.workspace = true
 reqwest.workspace = true
 semver.workspace = true
@@ -51,11 +57,6 @@ tame-index.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 toml_edit.workspace = true
-console = { workspace = true, features = ["std"] }
-glob.workspace = true
-granit-parser = { version = "2.1.0", default-features = false, features = ["std"] }
-bpaf = { version = "0.9.28", features = ["derive", "autocomplete", "bright-color"] }
-owo-colors = { version = "4.4.0", features = ["supports-colors"] }
 
 [dev-dependencies]
 tempfile.workspace = true

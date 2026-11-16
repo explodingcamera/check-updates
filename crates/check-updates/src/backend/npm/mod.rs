@@ -8,61 +8,23 @@ use crate::{DepKind, Package, PackageVersion, Packages, Purl, Requirement, Unit,
 
 mod cli;
 mod manifest;
+mod pm;
+mod project;
 mod update;
 
-use manifest::{PackageJson, PnpmWorkspace};
+use manifest::PackageJson;
+use pm::pnpm::PnpmWorkspace;
+pub use pm::{PackageManager, package_manager};
 pub use update::update_packages;
 
 /// JavaScript dependency management.
 pub(crate) struct NpmBackend;
 
-/// Package manager selected from a lockfile or `packageManager` field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackageManager {
-    Npm,
-    Pnpm,
-    Bun,
-}
-
-/// Detect the tool that owns this project's lockfile, if one exists.
-pub fn package_manager(root: &Path) -> Result<PackageManager, String> {
-    if root.join("yarn.lock").is_file() {
-        return Err("unsupported lockfile 'yarn.lock'".into());
-    }
-    let lockfiles = [
-        ("package-lock.json", PackageManager::Npm),
-        ("npm-shrinkwrap.json", PackageManager::Npm),
-        ("pnpm-lock.yaml", PackageManager::Pnpm),
-        ("bun.lock", PackageManager::Bun),
-        ("bun.lockb", PackageManager::Bun),
-    ];
-    let detected: Vec<_> = lockfiles
-        .iter()
-        .filter(|(file, _)| root.join(file).is_file())
-        .collect();
-    if detected.len() > 1 {
-        return Err(format!("multiple lockfiles found in {}", root.display()));
-    }
-    if let Some((_, manager)) = detected.first() {
-        return Ok(*manager);
-    }
-    let manifest = PackageJson::from_path(&root.join("package.json"))?;
-    let manager = manifest
-        .package_manager
-        .as_deref()
-        .map(|value| value.split_once('@').map_or(value, |(name, _)| name));
-    match manager {
-        Some("pnpm") => Ok(PackageManager::Pnpm),
-        Some("bun") => Ok(PackageManager::Bun),
-        Some("npm") | None => Ok(PackageManager::Npm),
-        Some(other) => Err(format!("unsupported package manager '{other}'")),
-    }
-}
-
 /// Options for discovering npm packages.
 #[derive(Debug, Default)]
 pub struct NpmOptions<'a> {
     pub packages: &'a [String],
+
 }
 
 /// Discovered npm projects and their package versions.
@@ -88,6 +50,13 @@ struct Project {
 
 /// Discover direct npm dependencies and their published versions without modifying project files.
 pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackages, String> {
+    let project_root = project::root(root)?.ok_or_else(|| {
+        format!(
+            "No package.json found in {} or its ancestors",
+            root.display()
+        )
+    })?;
+    let root = project_root.as_path();
     let root_path = root.join("package.json");
     let root_manifest = PackageJson::from_path(&root_path)?;
     let workspace = PnpmWorkspace::from_root(root)?;
@@ -95,7 +64,16 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
     let mut paths = BTreeSet::new();
     let mut excluded = BTreeSet::new();
     let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
-    let root_pattern = glob::Pattern::escape(&root.to_string_lossy());
+    // Escape directory names, not Windows drive/UNC prefixes such as `\\?\C:\`.
+    let root_pattern: PathBuf = root
+        .components()
+        .map(|component| match component {
+            std::path::Component::Normal(name) => {
+                glob::Pattern::escape(&name.to_string_lossy()).into()
+            }
+            _ => component.as_os_str().to_owned(),
+        })
+        .collect();
     let patterns = root_manifest
         .workspaces
         .as_ref()
@@ -109,7 +87,7 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
         if Path::new(pattern).is_absolute() || pattern.split('/').any(|part| part == "..") {
             continue;
         }
-        let pattern = Path::new(&root_pattern).join(pattern).join("package.json");
+        let pattern = root_pattern.join(pattern).join("package.json");
         let pattern = pattern.to_string_lossy();
         for path in glob::glob(&pattern).map_err(|error| error.to_string())? {
             let path = path.map_err(|error| error.to_string())?;

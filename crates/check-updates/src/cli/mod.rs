@@ -1,7 +1,11 @@
 use bpaf::Bpaf;
 use owo_colors::{OwoColorize, Stream, Style};
 
-use crate::{cmd, interactive};
+mod check;
+mod interactive;
+pub(crate) mod project;
+pub(crate) mod update;
+mod version;
 
 /// Check for updates in your dependencies.
 #[derive(Bpaf, Clone, Debug)]
@@ -157,7 +161,7 @@ pub async fn run(args: Args) {
         .root
         .clone()
         .unwrap_or_else(|| std::env::current_dir().expect("current directory"));
-    let has_updates = match cmd::run(&root, &args).await {
+    let has_updates = match check::run(&root, &args).await {
         Ok(has_updates) => has_updates,
         Err(error) => {
             log::error!("Failed to check dependencies: {error}");

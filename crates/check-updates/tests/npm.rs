@@ -150,8 +150,34 @@ async fn discovers_pnpm_workspace_without_package_json_workspaces() {
     )
     .unwrap();
     std::fs::write(app.join("package.json"), r#"{"name":"app"}"#).unwrap();
-    let found = packages(&root, &NpmOptions::default()).await.unwrap();
+    let found = packages(&app, &NpmOptions::default()).await.unwrap();
     assert_eq!(found.projects, ["root", "app"]);
+    assert_eq!(package_manager(&root).unwrap(), PackageManager::Pnpm);
+}
+
+#[tokio::test]
+async fn discovers_only_configured_parent_workspaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    std::fs::write(
+        root.join("package.json"),
+        r#"{"name":"root","workspaces":["packages/*"]}"#,
+    )
+    .unwrap();
+    let member = root.join("packages/app");
+    let standalone = root.join("other/app");
+    for path in [&member, &standalone] {
+        std::fs::create_dir_all(path.join("src")).unwrap();
+        std::fs::write(path.join("package.json"), r#"{"name":"app"}"#).unwrap();
+    }
+    let found = packages(&member.join("src"), &NpmOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(found.projects, ["root", "app"]);
+    let found = packages(&standalone.join("src"), &NpmOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(found.projects, ["app"]);
 }
 
 #[cfg(unix)]

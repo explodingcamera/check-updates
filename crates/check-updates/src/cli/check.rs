@@ -1,13 +1,12 @@
-pub(crate) mod project;
-
 use std::path::Path;
 
 use owo_colors::{OwoColorize, Stream};
 
-use self::project::Project;
-use crate::{cli, interactive, update};
+use super::project::Project;
+use super::{Args, interactive, update, version::VersionBump};
+use crate::backend::Backend;
 
-pub async fn run(root: &Path, args: &cli::Args) -> Result<bool, String> {
+pub(super) async fn run(root: &Path, args: &Args) -> Result<bool, String> {
     let projects =
         interactive::with_spinner("Fetching package data...", Project::discover(root, args))
             .await?;
@@ -39,12 +38,12 @@ pub async fn run(root: &Path, args: &cli::Args) -> Result<bool, String> {
                 .iter()
                 .flat_map(|updates| update::summary_groups(updates, mixed))
                 .collect();
-            let show_headers = mixed
+            let show_group_headers = mixed
                 || updates.iter().any(|updates| updates.len() > 1)
                 || projects
                     .iter()
-                    .any(|project| project.backend.show_headers());
-            interactive::print_groups(&groups, show_headers);
+                    .any(|project| matches!(&project.backend, Backend::Npm(_)));
+            interactive::print_groups(&groups, show_group_headers);
         }
     }
 
@@ -72,7 +71,7 @@ pub async fn run(root: &Path, args: &cli::Args) -> Result<bool, String> {
         } else {
             entries
                 .into_iter()
-                .filter(|update| args.breaking || update.bump != crate::version::VersionBump::Major)
+                .filter(|update| args.breaking || update.bump != VersionBump::Major)
                 .collect()
         };
         for project in &projects {

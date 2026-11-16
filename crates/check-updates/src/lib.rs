@@ -6,10 +6,6 @@ use std::time::Duration;
 use reqwest::Client;
 
 pub mod cli;
-mod cmd;
-mod interactive;
-mod update;
-mod version;
 pub use cli::run;
 
 use crate::backend::{CargoBackend, RegistryError};
@@ -39,6 +35,7 @@ pub enum RegistryCachePolicy {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Options {
     pub registry_cache_policy: RegistryCachePolicy,
+
 }
 
 pub struct State {
@@ -104,11 +101,19 @@ impl CheckUpdates {
     }
 
     pub async fn packages(&self) -> Result<Packages, Error> {
+        self.packages_with_root()
+            .await
+            .map(|(_, packages)| packages)
+    }
+
+    /// Load packages and retain Cargo's workspace root for native upgrade commands.
+    pub(crate) async fn packages_with_root(&self) -> Result<(PathBuf, Packages), Error> {
+        let (root, dependencies) = self.cargo.packages().await?;
         let mut packages = Packages::new();
         // Track (unit, package_name, req, kind) to deduplicate while still
         // preserving distinct dep sections in output.
         let mut seen = HashSet::new();
-        for package in self.cargo.packages().await? {
+        for package in dependencies {
             for usage in &package.usages {
                 // Wildcard requirements have nothing to update.
                 if usage.req.is_wildcard()
@@ -128,7 +133,7 @@ impl CheckUpdates {
                 ));
             }
         }
-        Ok(packages)
+        Ok((root, packages))
     }
 
     /// Update the locally installed versions of the given packages to the one specified

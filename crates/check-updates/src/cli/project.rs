@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::Packages;
 
+use super::{Args, update};
 use crate::backend::{Backend, CargoBackend, NpmBackend};
-use crate::{cli::Args, update};
 
 /// A discovered project and its dependencies.
 pub(crate) struct Project {

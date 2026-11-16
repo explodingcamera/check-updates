@@ -126,12 +126,12 @@ pub fn display_text(text: &str) -> String {
     safe
 }
 
-pub fn print_groups(groups: &[UpdateGroup], show_headers: bool) {
+pub fn print_groups(groups: &[UpdateGroup], show_group_headers: bool) {
     for (index, group) in groups.iter().enumerate() {
         if index > 0 {
             println!();
         }
-        if show_headers {
+        if show_group_headers {
             println!(
                 "{}",
                 group

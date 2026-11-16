@@ -48,8 +48,8 @@ impl CargoBackend {
         Self { state }
     }
 
-    /// Load dependency packages.
-    pub(crate) async fn packages(&self) -> Result<Vec<Package>, RegistryError> {
+    /// Load the workspace root and dependency packages.
+    pub(crate) async fn packages(&self) -> Result<(PathBuf, Vec<Package>), RegistryError> {
         let total_start = Instant::now();
 
         let index = SparseIndex::new(IndexLocation::new(IndexUrl::CratesIoSparse))
@@ -79,6 +79,8 @@ impl CargoBackend {
             "cargo.packages: cargo metadata resolution took {:?}",
             metadata_start.elapsed()
         );
+
+        let root = metadata.workspace_root.as_std_path().to_path_buf();
 
         let registry_start = Instant::now();
         let members = workspace_members(&metadata);
@@ -210,7 +212,7 @@ impl CargoBackend {
             total_start.elapsed()
         );
 
-        Ok(packages)
+        Ok((root, packages))
     }
 
     /// Apply version requirements to manifests.

@@ -4,7 +4,7 @@ use check_updates::{CheckUpdates, DepKind, Unit};
 
 #[tokio::test]
 async fn discovers_workspace_dependencies() {
-    let packages = CheckUpdates::new(Some(env!("CARGO_MANIFEST_DIR").into()))
+    let packages = CheckUpdates::new(Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")))
         .packages()
         .await
         .unwrap();

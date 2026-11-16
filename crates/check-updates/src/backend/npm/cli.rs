@@ -1,20 +1,21 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::npm::{NpmOptions, NpmPackages, PackageManager};
+use crate::npm::{NpmOptions, NpmPackages};
 use crate::{Package, Requirement, Usage};
 
 use crate::backend::BackendImpl;
-use crate::{cli::Args, cmd::project::Project};
+use crate::cli::{Args, project::Project};
 
 use super::NpmBackend;
 
 impl NpmBackend {
     /// Find and load a JavaScript project.
     pub(crate) async fn discover(root: &Path, args: &Args) -> Result<Option<Project>, String> {
-        if !root.join("package.json").is_file() {
+        let Some(root) = super::project::root(root)? else {
             return Ok(None);
-        }
+        };
+        let root = root.as_path();
         if args.upgrade {
             crate::npm::package_manager(root)?;
         }
@@ -43,27 +44,7 @@ impl BackendImpl for NpmBackend {
     }
 
     fn upgrade_command(&self, root: &Path, args: &Args) -> Result<Command, String> {
-        let manager = crate::npm::package_manager(root)?;
-        let (executable, operation, lockfile_arg) = match manager {
-            PackageManager::Npm => ("npm", "update", "--package-lock-only"),
-            PackageManager::Pnpm => ("pnpm", "update", "--lockfile-only"),
-            // Bun update rewrites package.json, so apply our edits with install instead.
-            PackageManager::Bun => ("bun", "install", "--lockfile-only"),
-        };
-        let mut command = Command::new(executable);
-        command.arg(operation).current_dir(root);
-        if manager == PackageManager::Pnpm {
-            command.arg("--no-save");
-        }
-        command.arg("--ignore-scripts");
-        if args.lockfile_only {
-            command.arg(lockfile_arg);
-        }
-        Ok(command)
-    }
-
-    fn show_headers(&self) -> bool {
-        true
+        Ok(crate::npm::package_manager(root)?.upgrade_command(root, args))
     }
 }
 

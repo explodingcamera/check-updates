@@ -4,8 +4,8 @@ use std::fmt::Write;
 use crate::{DepKind, Package, Packages, Requirement, Unit, Usage, VersionStrategy};
 use owo_colors::{OwoColorize, Stream};
 
-use crate::interactive::{UpdateGroup, display_text};
-use crate::version::{VersionBump, colorize_req, version_bump};
+use super::interactive::{UpdateGroup, display_text};
+use super::version::{VersionBump, colorize_req, version_bump};
 
 pub struct Update<'a> {
     pub name: &'a str,

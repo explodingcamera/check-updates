@@ -37,10 +37,5 @@ disponent::declare!(
 
         /// Build the dependency upgrade command.
         fn upgrade_command(&self, root: &Path, args: &Args) -> Result<Command, String>;
-
-        /// Show a header for a single update group.
-        fn show_headers(&self) -> bool {
-            false
-        }
     }
 );
