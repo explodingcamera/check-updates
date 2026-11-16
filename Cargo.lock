@@ -84,6 +84,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bottlecap"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a463ce210f54867112cc50974687427c1111eb25fe3ed267a8324904732dacb"
+dependencies = [
+ "hashbrown",
+]
+
+[[package]]
 name = "bpaf"
 version = "0.9.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -189,6 +198,7 @@ dependencies = [
 name = "check-updates"
 version = "0.7.0"
 dependencies = [
+ "bottlecap",
  "bpaf",
  "cargo_metadata",
  "console",

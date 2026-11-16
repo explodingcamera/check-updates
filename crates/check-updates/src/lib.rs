@@ -25,6 +25,14 @@ pub use semver::Version;
 type Purl = purl::GenericPurl<String>;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+const USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+    " (+",
+    env!("CARGO_PKG_REPOSITORY"),
+    ")"
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RegistryCachePolicy {
@@ -54,14 +62,7 @@ impl State {
         let client = Client::builder()
             .http2_adaptive_window(true)
             .timeout(HTTP_TIMEOUT)
-            .user_agent(concat!(
-                env!("CARGO_PKG_NAME"),
-                "/",
-                env!("CARGO_PKG_VERSION"),
-                " (+",
-                env!("CARGO_PKG_REPOSITORY"),
-                ")"
-            ))
+            .user_agent(USER_AGENT)
             .build()
             .expect("failed to initialize HTTP client");
         Self {

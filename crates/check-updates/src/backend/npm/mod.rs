@@ -206,7 +206,7 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
     }
 
     let client = reqwest::Client::builder()
-        .user_agent(concat!("check-updates/", env!("CARGO_PKG_VERSION")))
+        .user_agent(crate::USER_AGENT)
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| error.to_string())?;
@@ -214,9 +214,13 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
         reqwest::Url::parse("https://registry.npmjs.org/").expect("valid public npm registry URL");
     let mut versions = BTreeMap::new();
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
+    let limiter = std::sync::Arc::new(bottlecap::Limiter::new(
+        bottlecap::Quota::per_second(10),
+    ));
     let mut tasks = tokio::task::JoinSet::new();
     for name in names {
         let client = client.clone();
+        let limiter = limiter.clone();
         let publish_age = publish_age.clone();
         let mut url = registry.clone();
         let permit = semaphore
@@ -230,6 +234,10 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                 .map_err(|_| "invalid registry URL".to_string())?
                 .pop_if_empty()
                 .push(&name);
+            limiter
+                .wait(tokio::time::sleep)
+                .await
+                .map_err(|error| error.to_string())?;
             let mut response = client
                 .get(url.clone())
                 .header("Accept", "application/json")
@@ -241,6 +249,10 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(500 * (1 << attempt))).await;
+                limiter
+                    .wait(tokio::time::sleep)
+                    .await
+                    .map_err(|error| error.to_string())?;
                 response = client
                     .get(url.clone())
                     .header("Accept", "application/json")

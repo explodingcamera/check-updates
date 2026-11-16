@@ -23,6 +23,7 @@ repository = "https://github.com/explodingcamera/check-updates"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
+bottlecap = { version = "0.2", default-features = false }
 bpaf = { version = "0.9", features = ["autocomplete", "bright-color", "derive"] }
 check-updates = { path = "crates/check-updates", version = "0.7" }
 glob = "0.3"

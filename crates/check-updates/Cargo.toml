@@ -38,6 +38,7 @@ name = "cargo-check-updates"
 path = "src/bin/cargo-check-updates.rs"
 
 [dependencies]
+bottlecap.workspace = true
 bpaf.workspace = true
 cargo_metadata.workspace = true
 console = { workspace = true, features = ["std"] }
