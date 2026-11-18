@@ -3,19 +3,18 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Instant;
 
-use cargo_metadata::{CargoOpt, MetadataCommand};
-use tame_index::index::{FileLock, IndexLocation, IndexUrl, SparseIndex};
 use thiserror::Error;
 
 use crate::{
-    RegistryCachePolicy, Requirement, State,
+    Requirement, State,
     backend::RegistryError,
-    package::{DepKind, Package, PackageVersion, Unit, Usage},
+    package::{DepKind, Package, Unit, Usage},
 };
 
 mod cli;
 mod config;
 mod fetch;
+mod metadata;
 mod resolve;
 mod update;
 
@@ -30,10 +29,18 @@ pub enum CargoError {
     Metadata(String),
     #[error("failed to access crates.io index: {0}")]
     Index(#[from] tame_index::Error),
+    #[error("failed to read registry entry for '{name}': {source}")]
+    RegistryEntry {
+        name: String,
+        #[source]
+        source: tame_index::Error,
+    },
     #[error("HTTP request failed: {0}")]
     Http(#[from] http::Error),
     #[error("request error: {0}")]
     Reqwest(#[from] reqwest::Error),
+    #[error("failed to read registry response: {0}")]
+    Body(String),
     #[error("fetch task failed: {0}")]
     FetchTask(#[from] tokio::task::JoinError),
     #[error("manifest is not writable: {0}")]
@@ -55,35 +62,10 @@ impl CargoBackend {
     pub(crate) async fn packages(&self) -> Result<(PathBuf, Vec<Package>), RegistryError> {
         let total_start = Instant::now();
 
-        let index = SparseIndex::new(IndexLocation::new(IndexUrl::CratesIoSparse))
-            .map_err(CargoError::from)?;
-        let lock = FileLock::unlocked();
-
-        let metadata_cmd = || {
-            let mut cmd = MetadataCommand::new();
-            if let Some(root) = self.state.root() {
-                cmd.current_dir(root);
-            }
-            cmd.other_options(config::overrides(
-                self.state.options.min_publish_age,
-                self.state.options.ignore_publish_age,
-            ));
-            cmd
-        };
-
         let metadata_start = Instant::now();
-        let metadata = metadata_cmd()
-            .features(CargoOpt::AllFeatures)
-            .exec()
-            .or_else(|_| {
-                metadata_cmd()
-                    .features(CargoOpt::SomeFeatures(vec![]))
-                    .exec()
-            })
-            .or_else(|_| metadata_cmd().exec())
-            .map_err(|e| CargoError::Metadata(e.to_string()))?;
+        let metadata = metadata::workspace(self.state.root().map(|root| root.as_path()))?;
         log::debug!(
-            "cargo.packages: cargo metadata resolution took {:?}",
+            "cargo.packages: workspace metadata took {:?}",
             metadata_start.elapsed()
         );
         let root = metadata.workspace_root.as_std_path().to_path_buf();
@@ -99,110 +81,21 @@ impl CargoBackend {
         let members = workspace_members(&metadata);
         let names = collect_crates_io_deps(&members);
 
-        let mut versions: HashMap<String, Vec<PackageVersion>> = HashMap::new();
-        let mut requests: Vec<(String, http::Request<()>)> = Vec::new();
-        let mut cache_hits = 0usize;
-        let policy = self.state.registry_cache_policy();
-        let use_local_cache = matches!(policy, RegistryCachePolicy::PreferLocal);
-        let write_cache_entry = !matches!(policy, RegistryCachePolicy::NoCache);
-
-        // A 304 response makes tame-index read the local cache entry instead, so
-        // requests without revalidation drop the conditional headers.
-        let revalidate = write_cache_entry;
-        let make_request =
-            |name: &str, revalidate: bool| -> Result<http::Request<()>, CargoError> {
-                let mut request: http::Request<()> = index
-                    .make_remote_request(name.try_into()?, None, &lock)?
-                    .into();
-                if !revalidate {
-                    let headers = request.headers_mut();
-                    headers.remove(http::header::IF_NONE_MATCH);
-                    headers.remove(http::header::IF_MODIFIED_SINCE);
-                }
-                Ok(request)
-            };
-
-        for name in &names {
-            if use_local_cache {
-                let crate_name = name.as_str().try_into().map_err(CargoError::from)?;
-                match index
-                    .cached_krate(crate_name, &lock)
-                    .and_then(|entry| entry.map(|entry| entry.deserialize()).transpose())
-                {
-                    Ok(Some(krate)) => {
-                        versions.insert(name.clone(), versions_from_krate(&krate, &publish_age));
-                        cache_hits += 1;
-                        continue;
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        log::debug!("cargo.packages: cache miss for '{name}': {err}");
-                    }
-                }
-            }
-
-            match make_request(name, revalidate) {
-                Ok(req) => requests.push((name.clone(), req)),
-                Err(e) => {
-                    log::warn!("failed to build cache request for '{name}': {e}");
-                }
-            }
-        }
-
+        let registry = fetch::Registry::try_new(self.state.client().clone())?;
+        let versions = registry.versions(&names, publish_age).await?;
         log::debug!(
-            "cargo.packages: cache policy {:?}, cache hits {}, network requests {}, registry resolve took {:?}",
-            policy,
-            cache_hits,
-            requests.len(),
+            "cargo.packages: checked {} registry entries in {:?}",
+            names.len(),
             registry_start.elapsed()
         );
 
-        let mut revalidated = revalidate;
-        while !requests.is_empty() {
-            let responses =
-                fetch::fetch_all(self.state.client(), std::mem::take(&mut requests)).await?;
-
-            for (name, response) in responses {
-                let crate_name = match name.as_str().try_into() {
-                    Ok(name) => name,
-                    Err(e) => {
-                        log::warn!("failed to parse crate name '{name}': {e}");
-                        continue;
-                    }
-                };
-
-                match index
-                    .parse_remote_response(crate_name, &response, write_cache_entry, &lock)
-                    .and_then(|entry| entry.map(|entry| entry.deserialize()).transpose())
-                {
-                    Ok(Some(krate)) => {
-                        versions.insert(name, versions_from_krate(&krate, &publish_age));
-                    }
-                    Ok(None) => {
-                        log::debug!("no crate data returned for '{name}'");
-                    }
-                    // The cache entry can be unreadable, e.g. when cargo wrote it
-                    // in a form tame-index rejects. Fetch the full entry instead.
-                    Err(e)
-                        if revalidated && response.status() == http::StatusCode::NOT_MODIFIED =>
-                    {
-                        log::debug!("refetching '{name}' after unreadable cache entry: {e}");
-                        match make_request(&name, false) {
-                            Ok(req) => requests.push((name, req)),
-                            Err(e) => log::warn!("failed to build request for '{name}': {e}"),
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("failed to parse versions for '{name}': {e}");
-                    }
-                }
-            }
-            revalidated = false;
-        }
-
         let workspace_root_manifest: PathBuf = metadata.workspace_root.join("Cargo.toml").into();
 
-        let crate_meta = crate_meta_from_packages(&metadata.packages);
+        let crate_meta = tame_index::utils::cargo_home()
+            .map(|home| {
+                metadata::cached_crate_meta(home.join("registry/src").as_std_path(), &names)
+            })
+            .unwrap_or_default();
 
         let inherited_deps: HashMap<PathBuf, InheritedDeps> = members
             .iter()
@@ -215,7 +108,7 @@ impl CargoBackend {
 
         let packages = build_packages(
             &members,
-            &versions,
+            versions,
             &workspace_root_manifest,
             &crate_meta,
             &inherited_deps,

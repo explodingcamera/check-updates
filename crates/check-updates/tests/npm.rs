@@ -1,4 +1,4 @@
-use check_updates::npm::{NpmOptions, PackageManager, package_manager, packages, update_packages};
+use check_updates::npm::{NpmOptions, PackageManager, packages, update_packages};
 use check_updates::{DepKind, Package, Requirement, Unit, Usage};
 
 #[test]
@@ -25,7 +25,7 @@ fn applies_selected_package_requirement() {
     let package = Package {
         purl: "pkg:npm/foo".parse().unwrap(),
         usages: vec![usage.clone()],
-        versions: Vec::new(),
+        versions: Default::default(),
         repository: None,
         homepage: None,
     };
@@ -64,7 +64,7 @@ fn updates_workspace_root_and_member_separately() {
     let package = Package {
         purl: "pkg:npm/foo".parse().unwrap(),
         usages: Vec::new(),
-        versions: Vec::new(),
+        versions: Default::default(),
         repository: None,
         homepage: None,
     };
@@ -92,7 +92,7 @@ async fn discovers_bun_workspace_from_package_json() {
     .unwrap();
     std::fs::write(app.join("package.json"), r#"{"name":"app"}"#).unwrap();
     std::fs::write(root.join("bun.lock"), "").unwrap();
-    assert_eq!(package_manager(root).unwrap(), PackageManager::Bun);
+    assert_eq!(PackageManager::detect(root).unwrap(), PackageManager::Bun);
 
     let found = packages(root, &NpmOptions::default()).await.unwrap();
     assert_eq!(found.projects, ["root", "app"]);
@@ -103,11 +103,11 @@ fn detects_lockfile_before_package_manager_field() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::write(root.join("package.json"), r#"{"packageManager":"npm@10"}"#).unwrap();
-    assert_eq!(package_manager(root).unwrap(), PackageManager::Npm);
+    assert_eq!(PackageManager::detect(root).unwrap(), PackageManager::Npm);
     std::fs::write(root.join("pnpm-lock.yaml"), "").unwrap();
-    assert_eq!(package_manager(root).unwrap(), PackageManager::Pnpm);
+    assert_eq!(PackageManager::detect(root).unwrap(), PackageManager::Pnpm);
     std::fs::write(root.join("bun.lock"), "").unwrap();
-    assert!(package_manager(root).is_err());
+    assert!(PackageManager::detect(root).is_err());
 }
 
 #[test]
@@ -115,12 +115,12 @@ fn defaults_to_npm_without_known_manager() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::write(root.join("package.json"), "{}").unwrap();
-    assert_eq!(package_manager(root).unwrap(), PackageManager::Npm);
+    assert_eq!(PackageManager::detect(root).unwrap(), PackageManager::Npm);
     std::fs::write(root.join("aube.lock"), "").unwrap();
-    assert_eq!(package_manager(root).unwrap(), PackageManager::Npm);
+    assert_eq!(PackageManager::detect(root).unwrap(), PackageManager::Npm);
 
     std::fs::write(root.join("pnpm-lock.yaml"), "").unwrap();
-    assert_eq!(package_manager(root).unwrap(), PackageManager::Pnpm);
+    assert_eq!(PackageManager::detect(root).unwrap(), PackageManager::Pnpm);
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn rejects_unsupported_package_manager() {
     )
     .unwrap();
     assert_eq!(
-        package_manager(dir.path()).unwrap_err(),
+        PackageManager::detect(dir.path()).unwrap_err(),
         "unsupported package manager 'unsupported'"
     );
 }
@@ -152,7 +152,7 @@ async fn discovers_pnpm_workspace_without_package_json_workspaces() {
     std::fs::write(app.join("package.json"), r#"{"name":"app"}"#).unwrap();
     let found = packages(&app, &NpmOptions::default()).await.unwrap();
     assert_eq!(found.projects, ["root", "app"]);
-    assert_eq!(package_manager(&root).unwrap(), PackageManager::Pnpm);
+    assert_eq!(PackageManager::detect(&root).unwrap(), PackageManager::Pnpm);
 }
 
 #[tokio::test]

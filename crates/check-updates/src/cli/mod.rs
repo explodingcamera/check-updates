@@ -25,10 +25,6 @@ pub struct Args {
     /// Exit with a non-zero status when updates are available
     pub fail_on_updates: bool,
 
-    /// Cache mode: prefer-local, refresh, or no-cache
-    #[bpaf(argument("MODE"), fallback(RegistryCacheMode::Refresh))]
-    pub cache: RegistryCacheMode,
-
     /// Update non-breaking version requirements in project manifests
     #[bpaf(short('u'), long)]
     pub update: bool,
@@ -55,8 +51,8 @@ pub struct Args {
     pub pre: bool,
 
     /// Minimum publication age, such as 7d or '12 hours' (0 disables)
-    #[bpaf(argument::<String>("AGE"), parse(|value| crate::publish_age::parse_duration(&value)), optional)]
-    pub min_publish_age: Option<std::time::Duration>,
+    #[bpaf(argument::<String>("AGE"), parse(|value| crate::publish_age::parse_span(&value)), optional)]
+    pub min_publish_age: Option<jiff::Span>,
 
     /// Ignore publication-age settings from configuration and --min-publish-age
     pub ignore_publish_age: bool,
@@ -74,31 +70,30 @@ pub struct Args {
 }
 
 impl Args {
+    /// Resolve an explicit publication age to the fixed units required by native tools.
+    pub(crate) fn native_publish_age(&self) -> Result<Option<std::time::Duration>, String> {
+        if self.ignore_publish_age {
+            return Ok(Some(std::time::Duration::ZERO));
+        }
+        self.min_publish_age
+            .map(|age| {
+                let now = jiff::Timestamp::now();
+                let cutoff = now
+                    .to_zoned_datetime(jiff::tz::TimeZone::UTC)
+                    .checked_sub(age)
+                    .map_err(|error| format!("invalid publish age: {error}"))?;
+                now.duration_since(cutoff.timestamp())
+                    .try_into()
+                    .map_err(|error| format!("invalid publish age: {error}"))
+            })
+            .transpose()
+    }
+
     pub fn version_strategy(&self) -> crate::VersionStrategy {
         crate::VersionStrategy {
             compatible: self.compatible,
             pre: self.pre,
             ignore_toolchain_version: self.ignore_toolchain_version,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum RegistryCacheMode {
-    PreferLocal,
-    Refresh,
-    NoCache,
-}
-
-impl std::str::FromStr for RegistryCacheMode {
-    type Err = &'static str;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "prefer-local" => Ok(Self::PreferLocal),
-            "refresh" => Ok(Self::Refresh),
-            "no-cache" => Ok(Self::NoCache),
-            _ => Err("expected prefer-local, refresh, or no-cache"),
         }
     }
 }

@@ -2,14 +2,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use super::{ConfigEnv, ManagerImpl, PublishAgeConfig};
+use super::{ConfigEnv, PackageManagerImpl, PublishAgeConfig};
 use crate::config::read_toml;
-use crate::publish_age::{numeric_duration, parse_duration};
+use crate::publish_age::parse_span;
 
 /// Resolve Bun's global and workspace bunfig files.
 pub(super) struct Bun;
 
-impl ManagerImpl for Bun {
+impl PackageManagerImpl for Bun {
     fn resolve_config(&self, root: &Path, env: &ConfigEnv) -> PublishAgeConfig {
         let mut config = PublishAgeConfig::default();
         let global = env
@@ -36,9 +36,15 @@ impl ManagerImpl for Bun {
             };
             if let Some(value) = install.get("minimumReleaseAge") {
                 let minimum = if let Some(value) = value.as_str() {
-                    parse_duration(value)
+                    parse_span(value)
                 } else if let Some(value) = value.as_integer() {
-                    numeric_duration(&value.to_string(), 1)
+                    if value < 0 {
+                        Err("minimumReleaseAge must be non-negative".into())
+                    } else {
+                        jiff::Span::new()
+                            .try_seconds(value)
+                            .map_err(|error| error.to_string())
+                    }
                 } else {
                     Err("minimumReleaseAge must be seconds or a duration string".into())
                 };
@@ -77,9 +83,10 @@ impl ManagerImpl for Bun {
             command.arg("--lockfile-only");
         }
         if let Some(minimum) = minimum {
+            let seconds = minimum.as_secs() + u64::from(minimum.subsec_nanos() != 0);
             command
                 .arg("--minimum-release-age")
-                .arg(minimum.as_secs().to_string());
+                .arg(seconds.to_string());
         }
         command
     }
@@ -87,8 +94,9 @@ impl ManagerImpl for Bun {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{PackageManager, publish_age};
+    use super::super::PackageManager;
     use super::*;
+    use crate::publish_age::PublishAge;
 
     #[test]
     fn merges_global_and_local_config() {
@@ -103,7 +111,8 @@ mod tests {
             "[install]\nminimumReleaseAge = 86400\nminimumReleaseAgeExcludes = ['pkg@1.0.0']\n",
         )
         .unwrap();
-        let policy = publish_age(&root, PackageManager::Bun, None, false, &env);
+        let policy =
+            PublishAge::try_from_npm_config(&root, PackageManager::Bun, None, false, &env).unwrap();
         assert!(policy.enabled());
         assert!(policy.allows("pkg", "1.0.0", Some("2099-01-01T00:00:00Z")));
         assert!(!policy.allows("pkg", "2.0.0", Some("2099-01-01T00:00:00Z")));
@@ -116,12 +125,20 @@ mod tests {
         .unwrap();
         env.0
             .insert("XDG_CONFIG_HOME".into(), config.to_string_lossy().into());
-        assert!(!publish_age(&root, PackageManager::Bun, None, false, &env).enabled());
+        assert!(
+            !PublishAge::try_from_npm_config(&root, PackageManager::Bun, None, false, &env)
+                .unwrap()
+                .enabled()
+        );
         std::fs::write(
             root.join("bunfig.toml"),
             "[install]\nminimumReleaseAge = '1 minute'\n",
         )
         .unwrap();
-        assert!(publish_age(&root, PackageManager::Bun, None, false, &env).enabled());
+        assert!(
+            PublishAge::try_from_npm_config(&root, PackageManager::Bun, None, false, &env)
+                .unwrap()
+                .enabled()
+        );
     }
 }

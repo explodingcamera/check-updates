@@ -115,20 +115,22 @@ mod tests {
                     yanked: false,
                     features: Default::default(),
                     required_toolchain_version: None,
-                }],
+                }]
+                .into(),
                 repository: None,
                 homepage: None,
             };
             projects.push(Project {
                 root: dir.path().to_path_buf(),
                 names: Vec::new(),
-                packages: Packages::from([(unit, vec![(req, DepKind::Normal, package)])]),
+                packages: Packages::from([(unit, vec![(req, DepKind::Normal, package.into())])]),
                 backend: if ecosystem == "cargo" {
-                    CheckUpdates::new(Some(dir.path().to_path_buf()))
+                    CheckUpdates::try_new(Some(dir.path().to_path_buf()), crate::Options::default())
+                        .unwrap()
                         .cargo
                         .into()
                 } else {
-                    NpmBackend.into()
+                    NpmBackend::try_new().unwrap().into()
                 },
             });
         }

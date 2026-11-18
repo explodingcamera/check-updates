@@ -1,6 +1,150 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::{manifest::PackageJson, pm::pnpm::PnpmWorkspace};
+use crate::{DepKind, Requirement, Unit};
+
+/// A declared npm dependency and its manifest alias.
+pub(super) struct Dependency {
+    pub(super) alias: String,
+    pub(super) name: String,
+    pub(super) requirement: Requirement,
+    pub(super) kind: DepKind,
+}
+
+/// A workspace project and its direct dependencies.
+pub(super) struct Project {
+    pub(super) name: String,
+    pub(super) unit: Unit,
+    pub(super) dependencies: Vec<Dependency>,
+}
+
+impl Project {
+    fn from_manifest(path: PathBuf, manifest: PackageJson, workspace: bool) -> Self {
+        let name = manifest.name.clone().unwrap_or_else(|| {
+            path.parent()
+                .unwrap_or(Path::new("."))
+                .display()
+                .to_string()
+        });
+        let unit = if workspace {
+            Unit::Workspace { manifest: path }
+        } else {
+            Unit::Project {
+                manifest: path,
+                name: name.clone(),
+            }
+        };
+        let mut dependencies = Vec::new();
+        for (kind, entries) in [
+            (DepKind::Normal, &manifest.dependencies),
+            (DepKind::Dev, &manifest.dev_dependencies),
+            (DepKind::Optional, &manifest.optional_dependencies),
+            (DepKind::Peer, &manifest.peer_dependencies),
+        ] {
+            for (alias, spec) in entries {
+                let (package, range) = if let Some(alias_spec) = spec.strip_prefix("npm:") {
+                    match alias_spec.rsplit_once('@') {
+                        Some((package, range)) => (package, range),
+                        None => continue,
+                    }
+                } else {
+                    (alias.as_str(), spec.as_str())
+                };
+                let Ok(requirement) = Requirement::from_node(spec) else {
+                    log::debug!("skipping non-semver dependency {alias}: {spec}");
+                    continue;
+                };
+                let Some(current) = requirement.current_version() else {
+                    continue;
+                };
+                if range == "*" || requirement.with_version(&current).is_none() {
+                    continue;
+                }
+                dependencies.push(Dependency {
+                    alias: alias.clone(),
+                    name: package.to_string(),
+                    requirement,
+                    kind,
+                });
+            }
+        }
+        Self {
+            name,
+            unit,
+            dependencies,
+        }
+    }
+}
+
+/// Read the root package and explicitly included workspace members.
+pub(super) fn discover(root: &Path, selected: &[String]) -> Result<Vec<Project>, String> {
+    let root_path = root.join("package.json");
+    let root_manifest = PackageJson::from_path(&root_path)?;
+    let workspace = PnpmWorkspace::from_root(root)?;
+    let has_workspace = root_manifest.workspaces.is_some() || !workspace.packages.is_empty();
+    let mut paths = BTreeSet::new();
+    let mut excluded = BTreeSet::new();
+    let canonical_root = root.canonicalize().map_err(|error| error.to_string())?;
+    // Escape directory names, not Windows drive/UNC prefixes such as `\\?\C:\`.
+    let root_pattern: PathBuf = root
+        .components()
+        .map(|component| match component {
+            std::path::Component::Normal(name) => {
+                glob::Pattern::escape(&name.to_string_lossy()).into()
+            }
+            _ => component.as_os_str().to_owned(),
+        })
+        .collect();
+    let patterns = root_manifest
+        .workspaces
+        .as_ref()
+        .map(|workspaces| workspaces.patterns())
+        .unwrap_or_default();
+    for pattern in patterns.iter().chain(&workspace.packages) {
+        let (exclude, pattern) = match pattern.strip_prefix('!') {
+            Some(pattern) => (true, pattern),
+            None => (false, pattern.as_str()),
+        };
+        if Path::new(pattern).is_absolute() || pattern.split('/').any(|part| part == "..") {
+            continue;
+        }
+        let pattern = root_pattern.join(pattern).join("package.json");
+        for path in glob::glob(&pattern.to_string_lossy()).map_err(|error| error.to_string())? {
+            let path = path.map_err(|error| error.to_string())?;
+            if path
+                .components()
+                .any(|part| part.as_os_str() == "node_modules")
+                || !path
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?
+                    .starts_with(&canonical_root)
+            {
+                continue;
+            }
+            if exclude {
+                excluded.insert(path);
+            } else {
+                paths.insert(path);
+            }
+        }
+    }
+    paths.retain(|path| !excluded.contains(path));
+    paths.remove(&root_path);
+    let mut projects = vec![Project::from_manifest(
+        root_path,
+        root_manifest,
+        has_workspace,
+    )];
+    for path in paths {
+        let manifest = PackageJson::from_path(&path)?;
+        projects.push(Project::from_manifest(path, manifest, false));
+    }
+    if !selected.is_empty() {
+        projects.retain(|project| selected.contains(&project.name));
+    }
+    Ok(projects)
+}
 
 /// Find the nearest package, promoting it only to a workspace that explicitly includes it.
 pub(super) fn root(start: &Path) -> Result<Option<PathBuf>, String> {

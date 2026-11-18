@@ -17,22 +17,24 @@ impl NpmBackend {
         };
         let root = root.as_path();
         if args.upgrade {
-            crate::npm::package_manager(root)?;
+            crate::npm::PackageManager::detect(root)?;
         }
-        let NpmPackages { projects, packages } = crate::npm::packages(
-            root,
-            &NpmOptions {
-                packages: &args.package,
-                min_publish_age: args.min_publish_age,
-                ignore_publish_age: args.ignore_publish_age,
-            },
-        )
-        .await?;
+        let backend = Self::try_new()?;
+        let NpmPackages { projects, packages } = backend
+            .packages(
+                root,
+                &NpmOptions {
+                    packages: &args.package,
+                    min_publish_age: args.min_publish_age,
+                    ignore_publish_age: args.ignore_publish_age,
+                },
+            )
+            .await?;
         Ok(Some(Project {
             root: root.to_path_buf(),
             names: projects,
             packages,
-            backend: Self.into(),
+            backend: backend.into(),
         }))
     }
 }
@@ -46,7 +48,7 @@ impl BackendImpl for NpmBackend {
     }
 
     fn upgrade_command(&self, root: &Path, args: &Args) -> Result<Command, String> {
-        Ok(crate::npm::package_manager(root)?.upgrade_command(root, args))
+        crate::npm::PackageManager::detect(root)?.upgrade_command(root, args)
     }
 }
 
@@ -57,6 +59,7 @@ mod tests {
     #[test]
     fn upgrade_commands() {
         let dir = tempfile::tempdir().unwrap();
+        let backend = NpmBackend::try_new().unwrap();
         for (manager, args, lockfile_arg, age_args, zero_args) in [
             (
                 "npm",
@@ -69,8 +72,8 @@ mod tests {
                 "pnpm",
                 &["update", "--no-save", "--ignore-scripts"][..],
                 "--lockfile-only",
-                &["--minimum-release-age=1440"][..],
-                &["--minimum-release-age=0"][..],
+                &["--config.minimum-release-age=1440"][..],
+                &["--config.minimum-release-age=0"][..],
             ),
             (
                 "bun",
@@ -97,7 +100,7 @@ mod tests {
                 ] {
                     let mut options = crate::cli::args().run_inner(flags).unwrap();
                     options.lockfile_only = lockfile_only;
-                    let command = NpmBackend.upgrade_command(dir.path(), &options).unwrap();
+                    let command = backend.upgrade_command(dir.path(), &options).unwrap();
                     let mut expected = args.to_vec();
                     if lockfile_only {
                         expected.push(lockfile_arg);

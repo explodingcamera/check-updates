@@ -1,13 +1,17 @@
 use std::path::PathBuf;
 
-use check_updates::{CheckUpdates, DepKind, Unit};
+use check_updates::{CheckUpdates, DepKind, Options, Unit};
 
 #[tokio::test]
 async fn discovers_workspace_dependencies() {
-    let packages = CheckUpdates::new(Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")))
-        .packages()
-        .await
-        .unwrap();
+    let packages = CheckUpdates::try_new(
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")),
+        Options::default(),
+    )
+    .unwrap()
+    .packages()
+    .await
+    .unwrap();
     let entries: Vec<_> = packages.values().flatten().collect();
     let serde = &entries
         .iter()
@@ -34,7 +38,11 @@ async fn discovers_workspace_dependencies() {
 async fn distinguishes_workspace_inheritance() {
     let root =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/cargo/workspace-demo");
-    let packages = CheckUpdates::new(Some(root)).packages().await.unwrap();
+    let packages = CheckUpdates::try_new(Some(root), Options::default())
+        .unwrap()
+        .packages()
+        .await
+        .unwrap();
     let entries: Vec<_> = packages.values().flatten().collect();
     let rand = &entries
         .iter()

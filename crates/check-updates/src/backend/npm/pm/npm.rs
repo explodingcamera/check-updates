@@ -3,13 +3,12 @@ use std::process::Command;
 use std::time::Duration;
 
 use super::super::npmrc::{NpmrcValues, last, read_npmrc, split_excludes};
-use super::{ConfigEnv, ManagerImpl, PublishAgeConfig};
-use crate::publish_age::numeric_duration;
+use super::{ConfigEnv, PackageManagerImpl, PublishAgeConfig};
 
 /// Resolve npm's layered configuration and environment overrides.
 pub(super) struct Npm;
 
-impl ManagerImpl for Npm {
+impl PackageManagerImpl for Npm {
     fn resolve_config(&self, root: &Path, env: &ConfigEnv) -> PublishAgeConfig {
         let mut config = PublishAgeConfig {
             patterns: true,
@@ -21,7 +20,24 @@ impl ManagerImpl for Npm {
             .filter_map(|source| last(source, "min-release-age"))
             .chain(env.npm("min-release-age"))
         {
-            match numeric_duration(value, 86400) {
+            let minimum = match value.trim().parse::<i64>() {
+                Ok(days) if days >= 0 => jiff::Span::new()
+                    .try_days(days)
+                    .map_err(|error| error.to_string()),
+                _ => value
+                    .trim()
+                    .parse::<f64>()
+                    .map_err(|error| error.to_string())
+                    .and_then(|days| {
+                        if !days.is_finite() || days < 0.0 {
+                            return Err("min-release-age must be finite and non-negative".into());
+                        }
+                        jiff::SignedDuration::try_from_secs_f64(days * 86400.0)
+                            .and_then(jiff::Span::try_from)
+                            .map_err(|error| error.to_string())
+                    }),
+            };
+            match minimum {
                 Ok(minimum) => config.minimum = Some(minimum),
                 Err(error) => log::warn!("ignoring invalid min-release-age: {error}"),
             }
@@ -131,8 +147,9 @@ fn npm_builtin(root: &Path, env: &ConfigEnv) -> NpmrcValues {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{PackageManager, publish_age};
+    use super::super::PackageManager;
     use super::*;
+    use crate::publish_age::PublishAge;
 
     #[test]
     #[cfg(unix)]
@@ -203,10 +220,11 @@ mod tests {
         )
         .unwrap();
         std::fs::write(root.join(".npmrc"), "min-release-age=${AGE:-1} # days\nmin-release-age-exclude[]=local\nmin-release-age-exclude[]=@org/*\n_authToken=${UNSET_SECRET}\n").unwrap();
-        let policy = publish_age(&root, PackageManager::Npm, None, false, &env);
+        let policy =
+            PublishAge::try_from_npm_config(&root, PackageManager::Npm, None, false, &env).unwrap();
         assert_eq!(
-            Npm.resolve_config(&root, &env).minimum,
-            Some(Duration::from_secs(86400))
+            Npm.resolve_config(&root, &env).minimum.unwrap().get_days(),
+            1
         );
         assert!(policy.enabled());
         assert_eq!(policy.excludes, ["local", "@org/*"]);
@@ -215,22 +233,32 @@ mod tests {
         assert!(!policy.allows("global", "1.0.0", future));
         env.0
             .insert("NPM_CONFIG_MIN_RELEASE_AGE".into(), "0".into());
-        assert!(!publish_age(&root, PackageManager::Npm, None, false, &env).enabled());
-        let minimum = Some(Duration::from_secs(60));
-        assert!(publish_age(&root, PackageManager::Npm, minimum, false, &env).enabled());
+        assert!(
+            !PublishAge::try_from_npm_config(&root, PackageManager::Npm, None, false, &env)
+                .unwrap()
+                .enabled()
+        );
+        let minimum = Some(jiff::Span::new().minutes(1));
+        assert!(
+            PublishAge::try_from_npm_config(&root, PackageManager::Npm, minimum, false, &env)
+                .unwrap()
+                .enabled()
+        );
         env.0.remove("NPM_CONFIG_MIN_RELEASE_AGE");
         std::fs::write(root.join(".npmrc"), "min-release-age=invalid\n").unwrap();
         assert_eq!(
-            Npm.resolve_config(&root, &env).minimum,
-            Some(Duration::from_secs(2 * 86400))
+            Npm.resolve_config(&root, &env).minimum.unwrap().get_days(),
+            2
         );
         for (minimum, ignore, enabled) in [
-            (Some(Duration::ZERO), false, false),
-            (Some(Duration::from_secs(60)), false, true),
+            (Some(jiff::Span::new()), false, false),
+            (Some(jiff::Span::new().minutes(1)), false, true),
             (None, true, false),
         ] {
             assert_eq!(
-                publish_age(&root, PackageManager::Npm, minimum, ignore, &env).enabled(),
+                PublishAge::try_from_npm_config(&root, PackageManager::Npm, minimum, ignore, &env)
+                    .unwrap()
+                    .enabled(),
                 enabled
             );
         }

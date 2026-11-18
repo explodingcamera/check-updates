@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added minimum release age support. Loaded from your package managers config, can be overridden using `--min-publish-age` / `--ignore-publish-age`.
+
+### Changed
+
+- Removed `--cache`. Updates are now always fetched.
+
+### Fixed
+
+- Fixed Cargo MSRV checks for Rust versions without a patch component, such as `1.56`.
+
 ## [v0.7.0] - 2026-11-10
 
 ### Changed

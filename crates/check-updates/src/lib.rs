@@ -1,7 +1,8 @@
+use jiff::Span;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::time::Duration;
+use std::sync::Arc;
 
 use reqwest::Client;
 
@@ -24,7 +25,6 @@ pub use semver::Version;
 
 type Purl = purl::GenericPurl<String>;
 
-const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const USER_AGENT: &str = concat!(
     env!("CARGO_PKG_NAME"),
     "/",
@@ -34,19 +34,11 @@ const USER_AGENT: &str = concat!(
     ")"
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RegistryCachePolicy {
-    PreferLocal,
-    #[default]
-    Refresh,
-    NoCache,
-}
-
+/// Options for checking Cargo dependency versions.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Options {
-    pub registry_cache_policy: RegistryCachePolicy,
-    /// Override the minimum publication age inherited from Cargo configuration.
-    pub min_publish_age: Option<Duration>,
+    /// Override the publication age inherited from Cargo configuration, resolved in UTC.
+    pub min_publish_age: Option<Span>,
     /// Ignore publication-age settings, including an explicit minimum.
     pub ignore_publish_age: bool,
 }
@@ -58,18 +50,14 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(root: Option<PathBuf>, options: Options) -> Self {
-        let client = Client::builder()
-            .http2_adaptive_window(true)
-            .timeout(HTTP_TIMEOUT)
-            .user_agent(USER_AGENT)
-            .build()
-            .expect("failed to initialize HTTP client");
-        Self {
+    /// Create Cargo state, reporting HTTP client initialization failures.
+    pub fn try_new(root: Option<PathBuf>, options: Options) -> Result<Self, reqwest::Error> {
+        let client = crate::backend::http::client_builder().build()?;
+        Ok(Self {
             client,
             root,
             options,
-        }
+        })
     }
 
     pub fn client(&self) -> &Client {
@@ -79,14 +67,12 @@ impl State {
     pub fn root(&self) -> Option<&PathBuf> {
         self.root.as_ref()
     }
-
-    pub fn registry_cache_policy(&self) -> RegistryCachePolicy {
-        self.options.registry_cache_policy
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("failed to initialize HTTP client: {0}")]
+    HttpClient(#[from] reqwest::Error),
     #[error("registry error: {0}")]
     Registry(#[from] RegistryError),
 }
@@ -96,14 +82,11 @@ pub struct CheckUpdates {
 }
 
 impl CheckUpdates {
-    pub fn new(root: Option<PathBuf>) -> Self {
-        Self::with_options(root, Options::default())
-    }
-
-    pub fn with_options(root: Option<PathBuf>, options: Options) -> Self {
-        Self {
-            cargo: CargoBackend::new(Rc::new(State::new(root, options))),
-        }
+    /// Create a checker with the given root and options.
+    pub fn try_new(root: Option<PathBuf>, options: Options) -> Result<Self, Error> {
+        Ok(Self {
+            cargo: CargoBackend::new(Rc::new(State::try_new(root, options)?)),
+        })
     }
 
     pub async fn packages(&self) -> Result<Packages, Error> {
@@ -120,6 +103,7 @@ impl CheckUpdates {
         // preserving distinct dep sections in output.
         let mut seen = HashSet::new();
         for package in dependencies {
+            let package = Arc::new(package);
             for usage in &package.usages {
                 // Wildcard requirements have nothing to update.
                 if usage.req.is_wildcard()
@@ -135,7 +119,7 @@ impl CheckUpdates {
                 packages.entry(usage.unit.clone()).or_default().push((
                     usage.req.clone(),
                     usage.kind,
-                    package.clone(),
+                    Arc::clone(&package),
                 ));
             }
         }

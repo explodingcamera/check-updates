@@ -4,7 +4,7 @@
 [<img alt="crates.io" src="https://img.shields.io/crates/v/check-updates.svg?style=flat-square&color=fc8d62&logo=rust" height="20">](https://crates.io/crates/check-updates)
 [<img alt="build status" src="https://img.shields.io/github/actions/workflow/status/explodingcamera/check-updates/ci.yaml?branch=main&style=flat-square" height="20">](https://github.com/explodingcamera/check-updates/actions?query=branch%3Amain)
 
-A simple tool for upgrading your dependencies to the latest version. Supports `cargo`, `npm`, `pnpm`, and `bun`.
+AA simple tool for upgrading your dependencies to the latest version. Supports `cargo`, `npm`, `pnpm`, `bun` and is MSRV and `min-publish-age` aware.
 
 ## Installation
 

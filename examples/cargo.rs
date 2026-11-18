@@ -16,7 +16,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("examples/cargo/workspace-demo"));
 
-    let checker = CheckUpdates::with_options(Some(root), Options::default());
+    let checker = CheckUpdates::try_new(Some(root), Options::default())?;
     let packages = checker.packages().await?;
 
     let mut total = 0usize;

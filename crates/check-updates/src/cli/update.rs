@@ -390,7 +390,7 @@ mod tests {
             repository: None,
             homepage: None,
         };
-        let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package)])]);
+        let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package.into())])]);
         resolve_updates(&packages, &VersionStrategy::default(), include_breaking)
             .values()
             .flatten()
@@ -438,7 +438,7 @@ mod tests {
             repository: None,
             homepage: None,
         };
-        let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package)])]);
+        let packages = Packages::from([(unit, vec![(req, DepKind::Normal, package.into())])]);
         let updates = resolve_updates(&packages, &VersionStrategy::default(), false);
         for groups in [
             summary_groups(&updates, false),
@@ -520,10 +520,12 @@ mod tests {
                 yanked: false,
                 features: Default::default(),
                 required_toolchain_version: None,
-            }],
+            }]
+            .into(),
             repository: None,
             homepage: None,
         };
+        let package = std::sync::Arc::new(package);
         let packages = Packages::from([(
             unit.clone(),
             vec![
@@ -566,11 +568,12 @@ mod tests {
                         yanked: false,
                         features: Default::default(),
                         required_toolchain_version: None,
-                    }],
+                    }]
+                    .into(),
                     repository: None,
                     homepage: None,
                 };
-                entries.push((req.clone(), kind, package));
+                entries.push((req.clone(), kind, package.into()));
             }
         }
         let packages = Packages::from([(unit.clone(), entries)]);
@@ -633,7 +636,7 @@ mod tests {
         let package = Package {
             purl: "pkg:cargo/example".parse().unwrap(),
             usages: vec![],
-            versions: vec![],
+            versions: Default::default(),
             repository: None,
             homepage: None,
         };

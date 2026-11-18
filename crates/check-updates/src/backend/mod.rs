@@ -5,6 +5,7 @@ use crate::{Package, Requirement, Usage};
 use crate::cli::Args;
 
 pub(crate) mod cargo;
+pub(crate) mod http;
 pub mod npm;
 
 pub(crate) use cargo::CargoBackend;

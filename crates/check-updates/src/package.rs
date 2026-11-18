@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::{Purl, Requirement, Version};
 
@@ -106,7 +107,7 @@ pub struct Usage {
 pub struct Package {
     pub purl: Purl,
     pub usages: Vec<Usage>,
-    pub versions: Vec<PackageVersion>,
+    pub versions: Arc<[PackageVersion]>,
     pub repository: Option<String>,
     pub homepage: Option<String>,
 }
@@ -136,7 +137,7 @@ impl Package {
         supported_toolchain_version: Option<&Version>,
     ) -> Option<&Version> {
         strategy.select(
-            &self.versions,
+            self.versions.iter(),
             requirement,
             requirement.current_version().as_ref(),
             supported_toolchain_version,
@@ -196,7 +197,8 @@ impl VersionStrategy {
     }
 }
 
-pub type Packages = HashMap<Unit, Vec<(Requirement, DepKind, Package)>>;
+/// Packages grouped by manifest, sharing package data across dependency usages.
+pub type Packages = HashMap<Unit, Vec<(Requirement, DepKind, Arc<Package>)>>;
 
 #[derive(Debug, Clone)]
 pub struct PackageVersion {
@@ -297,8 +299,7 @@ mod tests {
                 "{strategy:?}, supported={supported:?}"
             );
         }
-        package
-            .versions
+        Arc::make_mut(&mut package.versions)
             .iter_mut()
             .for_each(|version| version.yanked = true);
         assert!(

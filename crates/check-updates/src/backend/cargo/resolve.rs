@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use semver::Version;
 use tame_index::IndexKrate;
@@ -66,7 +67,15 @@ pub(super) fn versions_from_krate(
                     .features()
                     .map(|(name, members)| (name.clone(), members.clone()))
                     .collect(),
-                required_toolchain_version: v.rust_version().and_then(|s| Version::parse(s).ok()),
+                required_toolchain_version: v.rust_version().and_then(|value| {
+                    // Cargo accepts a rust-version without a minor or patch component.
+                    match value.bytes().filter(|&byte| byte == b'.').count() {
+                        0 => Version::parse(&format!("{value}.0.0")),
+                        1 => Version::parse(&format!("{value}.0")),
+                        _ => Version::parse(value),
+                    }
+                    .ok()
+                }),
             })
         })
         .collect()
@@ -169,43 +178,9 @@ pub(super) struct CrateMeta {
     pub homepage: Option<String>,
 }
 
-/// Build a lookup of crate metadata (repository, homepage) from the resolved
-/// dependency graph. When multiple versions of a crate are present, the latest
-/// version wins.
-pub(super) fn crate_meta_from_packages(
-    all_packages: &[cargo_metadata::Package],
-) -> HashMap<String, CrateMeta> {
-    let mut latest: HashMap<&str, &cargo_metadata::Package> = HashMap::new();
-    for package in all_packages.iter().filter(|package| {
-        package
-            .source
-            .as_ref()
-            .is_some_and(|source| source.is_crates_io())
-    }) {
-        if latest
-            .get(package.name.as_str())
-            .is_none_or(|current| current.version < package.version)
-        {
-            latest.insert(package.name.as_str(), package);
-        }
-    }
-    latest
-        .into_iter()
-        .map(|(name, package)| {
-            (
-                name.to_string(),
-                CrateMeta {
-                    repository: package.repository.clone(),
-                    homepage: package.homepage.clone(),
-                },
-            )
-        })
-        .collect()
-}
-
 pub(super) fn build_packages(
     members: &[&cargo_metadata::Package],
-    versions: &HashMap<String, Vec<PackageVersion>>,
+    mut versions: HashMap<String, Arc<[PackageVersion]>>,
     workspace_root_manifest: &Path,
     crate_meta: &HashMap<String, CrateMeta>,
     inherited_deps: &HashMap<PathBuf, InheritedDeps>,
@@ -254,7 +229,7 @@ pub(super) fn build_packages(
                     Package {
                         purl,
                         usages: vec![],
-                        versions: versions.get(&dep.name).cloned().unwrap_or_default(),
+                        versions: versions.remove(&dep.name).unwrap_or_default(),
                         repository: meta.and_then(|m| m.repository.clone()),
                         homepage: meta.and_then(|m| m.homepage.clone()),
                     }
@@ -271,7 +246,7 @@ pub(super) fn build_packages(
 mod tests {
     use super::*;
     use crate::publish_age::PublishAge;
-    use std::time::Duration;
+    use jiff::{Span, Timestamp};
 
     #[test]
     fn filters_index_publication_times() {
@@ -285,7 +260,7 @@ mod tests {
             let mut entry = serde_json::json!({
                 "name": "example", "vers": version, "deps": [],
                 "cksum": "0000000000000000000000000000000000000000000000000000000000000000",
-                "features": {}, "yanked": yanked
+                "features": {}, "yanked": yanked, "rust_version": "1.56"
             });
             if let Some(time) = time {
                 entry["pubtime"] = time.into();
@@ -294,8 +269,10 @@ mod tests {
         })
         .join("\n");
         let krate = IndexKrate::from_slice(lines.as_bytes()).unwrap();
-        let versions =
-            versions_from_krate(&krate, &PublishAge::new(Some(Duration::from_secs(86400))));
+        let versions = versions_from_krate(
+            &krate,
+            &PublishAge::try_new(Some(Span::new().days(1)), Timestamp::now()).unwrap(),
+        );
         assert_eq!(
             versions
                 .iter()
@@ -304,6 +281,10 @@ mod tests {
             ["1.0.0", "1.1.0", "1.3.0"]
         );
         assert!(versions.last().unwrap().yanked);
+        assert_eq!(
+            versions[0].required_toolchain_version,
+            Some(Version::new(1, 56, 0))
+        );
         assert_eq!(versions_from_krate(&krate, &PublishAge::default()).len(), 4);
     }
 }

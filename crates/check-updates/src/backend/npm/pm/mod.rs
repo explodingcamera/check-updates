@@ -1,3 +1,4 @@
+use jiff::{Span, Timestamp};
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -23,105 +24,98 @@ pub enum PackageManager {
     Bun,
 }
 
-/// Detect the tool that owns this project's lockfile, if one exists.
-pub fn package_manager(root: &Path) -> Result<PackageManager, String> {
-    if root.join("yarn.lock").is_file() {
-        return Err("unsupported lockfile 'yarn.lock'".into());
-    }
-    let lockfiles = [
-        ("package-lock.json", PackageManager::Npm),
-        ("npm-shrinkwrap.json", PackageManager::Npm),
-        ("pnpm-lock.yaml", PackageManager::Pnpm),
-        ("bun.lock", PackageManager::Bun),
-        ("bun.lockb", PackageManager::Bun),
-    ];
-    let detected: Vec<_> = lockfiles
-        .iter()
-        .filter(|(file, _)| root.join(file).is_file())
-        .collect();
-    if detected.len() > 1 {
-        return Err(format!("multiple lockfiles found in {}", root.display()));
-    }
-    if let Some((_, manager)) = detected.first() {
-        return Ok(*manager);
-    }
-    let manifest = PackageJson::from_path(&root.join("package.json"))?;
-    let manager = manifest
-        .package_manager
-        .as_deref()
-        .map(|value| value.split_once('@').map_or(value, |(name, _)| name));
-    match manager {
-        Some("pnpm") => Ok(PackageManager::Pnpm),
-        Some("bun") => Ok(PackageManager::Bun),
-        Some("npm") => Ok(PackageManager::Npm),
-        None if root.join("pnpm-workspace.yaml").is_file() => Ok(PackageManager::Pnpm),
-        None => Ok(PackageManager::Npm),
-        Some(other) => Err(format!("unsupported package manager '{other}'")),
+impl PackageManager {
+    /// Detect the manager from lockfiles and project metadata, rejecting unsupported or conflicting choices.
+    pub fn detect(root: &Path) -> Result<Self, String> {
+        if root.join("yarn.lock").is_file() {
+            return Err("unsupported lockfile 'yarn.lock'".into());
+        }
+        let lockfiles = [
+            ("package-lock.json", PackageManager::Npm),
+            ("npm-shrinkwrap.json", PackageManager::Npm),
+            ("pnpm-lock.yaml", PackageManager::Pnpm),
+            ("bun.lock", PackageManager::Bun),
+            ("bun.lockb", PackageManager::Bun),
+        ];
+        let detected: Vec<_> = lockfiles
+            .iter()
+            .filter(|(file, _)| root.join(file).is_file())
+            .collect();
+        if detected.len() > 1 {
+            return Err(format!("multiple lockfiles found in {}", root.display()));
+        }
+        if let Some((_, manager)) = detected.first() {
+            return Ok(*manager);
+        }
+        let manifest = PackageJson::from_path(&root.join("package.json"))?;
+        let manager = manifest
+            .package_manager
+            .as_deref()
+            .map(|value| value.split_once('@').map_or(value, |(name, _)| name));
+        match manager {
+            Some("pnpm") => Ok(PackageManager::Pnpm),
+            Some("bun") => Ok(PackageManager::Bun),
+            Some("npm") => Ok(PackageManager::Npm),
+            None if root.join("pnpm-workspace.yaml").is_file() => Ok(PackageManager::Pnpm),
+            None => Ok(PackageManager::Npm),
+            Some(other) => Err(format!("unsupported package manager '{other}'")),
+        }
     }
 }
 
 #[derive(Default)]
 struct PublishAgeConfig {
-    minimum: Option<Duration>,
+    minimum: Option<Span>,
     excludes: Vec<String>,
     ignore_missing: Option<bool>,
     patterns: bool,
 }
 
-disponent::declare!(
-    #[disponent::configure(inherent, from)]
-    enum Manager {
-        Npm(Npm),
-        Pnpm(Pnpm),
-        Bun(Bun),
-    }
-
-    trait ManagerImpl {
-        fn resolve_config(&self, root: &Path, env: &ConfigEnv) -> PublishAgeConfig;
-        fn upgrade_command(&self, lockfile_only: bool, minimum: Option<Duration>) -> Command;
-    }
-);
-
-/// Resolve the selected manager's settings and apply explicit publication-age overrides.
-pub(super) fn publish_age(
-    root: &Path,
-    manager: PackageManager,
-    minimum: Option<Duration>,
-    ignore: bool,
-    env: &ConfigEnv,
-) -> PublishAge {
-    if ignore || minimum.is_some_and(|minimum| minimum.is_zero()) {
-        return PublishAge::new(None);
-    }
-    let config = Manager::from(manager).resolve_config(root, env);
-    let mut policy = PublishAge::new(minimum.or(config.minimum));
-    policy.excludes = config.excludes;
-    policy.patterns = config.patterns;
-    policy.ignore_missing_time = config.ignore_missing.unwrap_or(true);
-    policy
+trait PackageManagerImpl {
+    fn resolve_config(&self, root: &Path, env: &ConfigEnv) -> PublishAgeConfig;
+    fn upgrade_command(&self, lockfile_only: bool, minimum: Option<Duration>) -> Command;
 }
 
-impl From<PackageManager> for Manager {
-    fn from(manager: PackageManager) -> Self {
-        match manager {
-            PackageManager::Npm => Npm.into(),
-            PackageManager::Pnpm => Pnpm.into(),
-            PackageManager::Bun => Bun.into(),
+impl PublishAge {
+    /// Resolve the selected manager's settings and apply explicit publication-age overrides.
+    pub(super) fn try_from_npm_config(
+        root: &Path,
+        manager: PackageManager,
+        minimum: Option<Span>,
+        ignore: bool,
+        env: &ConfigEnv,
+    ) -> Result<PublishAge, String> {
+        if ignore || minimum.is_some_and(|minimum| minimum.is_zero()) {
+            return PublishAge::try_new(None, Timestamp::now());
         }
+        let config = manager.resolve_config(root, env);
+        let mut policy = PublishAge::try_new(minimum.or(config.minimum), Timestamp::now())?;
+        policy.excludes = config.excludes;
+        policy.patterns = config.patterns;
+        policy.ignore_missing_time = config.ignore_missing.unwrap_or(true);
+        Ok(policy)
     }
 }
 
 impl PackageManager {
+    fn resolve_config(&self, root: &Path, env: &ConfigEnv) -> PublishAgeConfig {
+        match self {
+            Self::Npm => Npm.resolve_config(root, env),
+            Self::Pnpm => Pnpm.resolve_config(root, env),
+            Self::Bun => Bun.resolve_config(root, env),
+        }
+    }
+
     /// Build a native command using the selected manager's flags and age units.
-    pub(super) fn upgrade_command(self, root: &Path, args: &Args) -> Command {
-        let minimum = if args.ignore_publish_age {
-            Some(Duration::ZERO)
-        } else {
-            args.min_publish_age
+    pub(super) fn upgrade_command(&self, root: &Path, args: &Args) -> Result<Command, String> {
+        let minimum = args.native_publish_age()?;
+        let mut command = match self {
+            Self::Npm => Npm.upgrade_command(args.lockfile_only, minimum),
+            Self::Pnpm => Pnpm.upgrade_command(args.lockfile_only, minimum),
+            Self::Bun => Bun.upgrade_command(args.lockfile_only, minimum),
         };
-        let mut command = Manager::from(self).upgrade_command(args.lockfile_only, minimum);
         command.current_dir(root);
-        command
+        Ok(command)
     }
 }
 

@@ -1,46 +1,25 @@
+use jiff::{Span, Timestamp};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use crate::config::{ConfigEnv, read_toml};
-use crate::publish_age::{PublishAge, parse_duration};
+use crate::publish_age::{PublishAge, parse_span};
 
 #[derive(Default)]
 struct Settings {
-    global: Option<Duration>,
-    registry: Option<Duration>,
+    global: Option<Span>,
+    registry: Option<Span>,
     allow: bool,
 }
 
-/// Native overrides for both metadata resolution and dependency upgrades.
-pub(super) fn overrides(minimum: Option<Duration>, ignore: bool) -> Vec<String> {
-    let Some(age) = (if ignore {
-        Some(Duration::ZERO)
-    } else {
-        minimum
-    }) else {
-        return Vec::new();
-    };
-    let behavior = if ignore { "allow" } else { "deny" };
-    let age = format!("\"{} seconds\"", age.as_secs());
-    vec![
-        "--config".into(),
-        format!("resolver.incompatible-publish-age=\"{behavior}\""),
-        "--config".into(),
-        format!("registry.global-min-publish-age={age}"),
-        "--config".into(),
-        format!("registries.crates-io.min-publish-age={age}"),
-    ]
-}
-
-/// Resolve Cargo's global and hierarchical project settings, then environment overrides.
+/// Resolve the publication cutoff from Cargo settings, environment, and explicit overrides.
 pub(super) fn load(
     root: &Path,
-    minimum: Option<Duration>,
+    minimum: Option<Span>,
     ignore: bool,
     env: &ConfigEnv,
 ) -> Result<PublishAge, String> {
     if ignore || minimum.is_some() {
-        return Ok(PublishAge::new(if ignore { None } else { minimum }));
+        return PublishAge::try_new(if ignore { None } else { minimum }, Timestamp::now());
     }
     let root = root.canonicalize().map_err(|error| error.to_string())?;
     let home = env
@@ -82,7 +61,7 @@ pub(super) fn load(
         ),
     ] {
         if let Some(value) = env.get(key) {
-            match parse_duration(value) {
+            match parse_span(value) {
                 Ok(age) => *minimum = Some(age),
                 Err(error) => log::warn!("ignoring invalid {key}: {error}"),
             }
@@ -96,11 +75,14 @@ pub(super) fn load(
             }
         }
     }
-    Ok(PublishAge::new(if settings.allow {
-        None
-    } else {
-        settings.registry.or(settings.global)
-    }))
+    PublishAge::try_new(
+        if settings.allow {
+            None
+        } else {
+            settings.registry.or(settings.global)
+        },
+        Timestamp::now(),
+    )
 }
 
 impl Settings {
@@ -166,7 +148,7 @@ impl Settings {
                     match value
                         .as_str()
                         .ok_or_else(|| format!("{key} must be a string"))
-                        .and_then(parse_duration)
+                        .and_then(parse_span)
                     {
                         Ok(age) => *minimum = Some(age),
                         Err(error) => {
@@ -239,7 +221,7 @@ mod tests {
         );
         assert!(!load(&root, None, false, &env).unwrap().enabled());
         assert!(
-            !load(&root, Some(Duration::ZERO), false, &env)
+            !load(&root, Some(Span::new()), false, &env)
                 .unwrap()
                 .enabled()
         );
@@ -250,12 +232,12 @@ mod tests {
         .unwrap();
         assert!(!load(&root, None, false, &env).unwrap().enabled());
         assert!(
-            load(&root, Some(Duration::from_secs(60)), false, &env)
+            load(&root, Some(Span::new().minutes(1)), false, &env)
                 .unwrap()
                 .enabled()
         );
         assert!(
-            !load(&root, Some(Duration::from_secs(60)), true, &env)
+            !load(&root, Some(Span::new().minutes(1)), true, &env)
                 .unwrap()
                 .enabled()
         );
@@ -277,7 +259,7 @@ mod tests {
         .unwrap();
         let mut settings = Settings::default();
         settings.read(&path, &mut Vec::new()).unwrap();
-        assert_eq!(settings.global.unwrap().as_secs(), 7 * 86400);
+        assert_eq!(settings.global.unwrap().get_days(), 7);
         std::fs::write(
             dir.path().join("shared.toml"),
             "include = ['config.toml']\n",

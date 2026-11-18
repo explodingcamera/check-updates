@@ -18,11 +18,6 @@ fn handles_help_version_and_invalid_options() {
             (&["-iUV"][..], 0, env!("CARGO_PKG_VERSION")),
             (&["-iU"][..], 1, "No Cargo.toml or package.json found"),
             (
-                &["--cache", "invalid"][..],
-                2,
-                "expected prefer-local, refresh, or no-cache",
-            ),
-            (
                 &["--lockfile-only"][..],
                 2,
                 "--lockfile-only requires --upgrade",

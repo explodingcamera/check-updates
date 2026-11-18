@@ -4,7 +4,7 @@ use granit_parser::{Event, Parser};
 
 /// Workspace members and publication-age settings from pnpm-workspace.yaml.
 #[derive(Default)]
-pub(in crate::backend::npm) struct PnpmWorkspace {
+pub(crate) struct PnpmWorkspace {
     pub packages: Vec<String>,
     /// Native age value in minutes, possibly containing an environment reference.
     pub minimum_release_age: Option<String>,
@@ -15,7 +15,8 @@ pub(in crate::backend::npm) struct PnpmWorkspace {
 }
 
 impl PnpmWorkspace {
-    pub fn from_root(root: &Path) -> Result<Self, String> {
+    /// Read workspace settings from the given project root.
+    pub(crate) fn from_root(root: &Path) -> Result<Self, String> {
         let path = root.join("pnpm-workspace.yaml");
         if !path.is_file() {
             return Ok(Self::default());
@@ -25,7 +26,7 @@ impl PnpmWorkspace {
     }
 
     /// Read workspace patterns and age settings while skipping unrelated YAML values.
-    pub(in crate::backend::npm) fn parse(contents: &str) -> Result<Self, String> {
+    pub(crate) fn parse(contents: &str) -> Result<Self, String> {
         let mut events = Parser::new_from_str(contents).filter_map(|result| match result {
             Ok((
                 Event::StreamStart

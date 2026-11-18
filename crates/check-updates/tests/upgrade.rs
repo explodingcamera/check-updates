@@ -106,7 +106,13 @@ fn upgrade_with_installed_managers() {
             std::fs::write(root.join("package.json"), &manifest).unwrap();
             let mut command = Command::new(env!("CARGO_BIN_EXE_check-updates"));
             command
-                .args(["--root", root.to_str().unwrap(), "-U"])
+                .args([
+                    "--root",
+                    root.to_str().unwrap(),
+                    "-U",
+                    "--min-publish-age",
+                    "1d",
+                ])
                 .env("CI", "true");
             if lockfile_only {
                 command.arg("--lockfile-only");
