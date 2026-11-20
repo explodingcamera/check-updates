@@ -22,7 +22,6 @@ pub use update::update_packages;
 pub(crate) struct NpmBackend {
     client: reqwest::Client,
     registry: reqwest::Url,
-    limiter: Arc<bottlecap::Limiter>,
 }
 
 /// Options for discovering npm packages.
@@ -56,7 +55,7 @@ pub async fn packages(root: &Path, options: &NpmOptions<'_>) -> Result<NpmPackag
 }
 
 impl NpmBackend {
-    /// Create a backend with a reusable registry client and rate limiter.
+    /// Create a backend with a reusable registry client.
     pub(crate) fn try_new() -> Result<Self, String> {
         Ok(Self {
             client: crate::backend::http::client_builder()
@@ -64,7 +63,6 @@ impl NpmBackend {
                 .map_err(|error| error.to_string())?,
             registry: reqwest::Url::parse("https://registry.npmjs.org/")
                 .expect("valid public npm registry URL"),
-            limiter: Arc::new(bottlecap::Limiter::new(bottlecap::Quota::per_second(10))),
         })
     }
 

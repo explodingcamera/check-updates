@@ -24,7 +24,7 @@ struct RegistryVersion {
 }
 
 impl NpmBackend {
-    /// Fetch published versions using this backend's client and rate limiter.
+    /// Fetch published versions
     pub(super) async fn versions(
         &self,
         names: BTreeSet<String>,
@@ -67,10 +67,6 @@ impl NpmBackend {
             .push(name);
         let mut retries = 0;
         let mut response = loop {
-            self.limiter
-                .wait(tokio::time::sleep)
-                .await
-                .map_err(|error| error.to_string())?;
             let response = self
                 .client
                 .get(url.clone())

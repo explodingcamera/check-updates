@@ -16,16 +16,15 @@ members = ["crates/*"]
 default-members = ["crates/check-updates"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.98"
 repository = "https://github.com/explodingcamera/check-updates"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-bottlecap = { version = "0.2", default-features = false }
 bpaf = { version = "0.9", features = ["autocomplete", "bright-color", "derive"] }
-check-updates = { path = "crates/check-updates", version = "0.7" }
+check-updates = { path = "crates/check-updates", version = "0.8" }
 glob = "0.3"
 granit-parser = { version = "2.2", default-features = false, features = ["std"] }
 jiff = { version = "1.0", default-features = false, features = ["std"] }
